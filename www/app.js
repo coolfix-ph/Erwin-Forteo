@@ -289,7 +289,7 @@ async function enter() {
   TAB = u.role == "customer" ? "find" : u.role == "admin" ? "ov" : "dash"; CUR = null;
   if (u.role == "customer") {
     await loadTechs(); show(); initGM();
-    getLoc().then(p => { if (p) { C = p; TECHS.forEach(place); if (VIEW == "home") home(); if (GL) { gme.setPosition(C); gmap.setCenter(C); gpins() } } });
+    getLoc().then(p => { if (p) { C = p; TECHS.forEach(place); if (VIEW == "home") home(); if (GL) mapMe() } });
   } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs()]); show() }
   else { syncWatch(); show() }
 }
@@ -362,7 +362,7 @@ function pick(t) {
   $("panel").innerHTML = `<h2>${esc(t.n)}</h2><p class="mute" style="margin:0">${esc(t.s.join(', '))} · ${dist(t).toFixed(1)} km ang layo</p>
  <div class="price" style="margin-top:12px"><span>${esc(item.t)}<br><b style="font-size:16px">${esc(item.n)}</b></span><span class="mute">${fmt(item.p)}</span></div>
  ${opt ? `<p class="gh">Dagdag na singil (kung kailangan)</p>${opt}` : ''}
- <label class="mute" style="display:block;margin-top:10px">Address<input id="ad" value="${esc(USER.addr || '')}" placeholder="Bahay/Unit, Kalye, Brgy., Lungsod"></label>
+ <label class="mute" style="display:block;margin-top:10px">Address<input id="ad" value="${esc(USER.addr || '')}" placeholder="Bahay/Unit, Kalye, Brgy., Lungsod"></label>${LF || GM ? `<button class="chip adb" id="adm" type="button"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 22c-5-6.5-8-10.5-8-14a8 8 0 0 1 16 0c0 3.5-3 7.5-8 14z" fill="currentColor"/><circle cx="12" cy="8" r="3" fill="var(--panel)"/></svg>Piliin sa mapa ang eksaktong lugar</button>` : ''}
  <label class="mute" style="display:block;margin-top:10px">Oras<select id="tm"><option>Ngayon (~${eta(t)} min)</option><option>Mamayang hapon</option><option>Bukas ng umaga</option></select></label>
  <div class="price"><span>Tinatayang bayad${au.length ? `<br><small class="mute">kasama ang ${au.map(o => esc(o.n)).join(', ')}</small>` : ''}</span><b id="pr"></b></div><p class="mute" style="font-size:13px;margin:4px 0 0">Suggested starting rates ito. Maaaring magbago ang huling bayad depende sa aktwal na check ng unit. Hiwalay ang singil sa parte.</p>
  <p class="err" id="be" role="alert"></p>
@@ -374,6 +374,7 @@ function pick(t) {
     up = () => { const e = est(); $("pr").textContent = fmt(e[0]) + (e[1] ? ' + custom' : '') };
   document.querySelectorAll("[data-oc]").forEach(i => i.onchange = up); up();
   $("bc").onclick = home; $("mg").onclick = () => openChat(t);
+  if ($("adm")) $("adm").onclick = () => addressPicker(C, v => { if (!v) return; $("ad").value = v.text; C = { lat: v.lat, lng: v.lng }; TECHS.forEach(place); if (GL) mapMe() });
   $("bk").onclick = async () => {
     const ad = $("ad").value.trim(); if (ad.length < 5) { $("be").textContent = "Ilagay ang buong address mo."; return }
     const extras = OC.filter((o, i) => !o.a && on(i)).map(o => o.n);
@@ -703,7 +704,8 @@ const dot = (s, c) => ({ path: google.maps.SymbolPath.CIRCLE, scale: s, fillColo
 window.gm_authFailure = () => { GL = false; $('gm').hidden = true; $('svg').style.display = ''; pins() };
 function loadGM() { return new Promise(r => { if (!GM) return r(false); if (window.google?.maps) return r(true); window.__gm = () => r(true); const s = document.createElement('script'); s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(CFG.mapsKey) + '&callback=__gm&loading=async'; s.onerror = () => r(false); document.head.appendChild(s) }) }
 async function initGM() {
-  if (GL || !GM || !await loadGM()) return;
+  if (!GM) return initLM();
+  if (GL || !await loadGM()) return;
   GL = true; $('svg').style.display = 'none'; const el = $('gm'); el.hidden = false;
   gmap = new google.maps.Map(el, { center: C, zoom: 14, disableDefaultUI: true, zoomControl: true, clickableIcons: false, gestureHandling: 'greedy' });
   gme = new google.maps.Marker({ position: C, map: gmap, title: 'Ikaw', icon: dot(9, '#2F7FE0') });
@@ -711,14 +713,16 @@ async function initGM() {
 }
 function gpins() {
   if (!GL) return;
+  if (LF) return lpins();
   gmk.forEach(m => m.setMap(null)); gmk = [];
   const b = new google.maps.LatLngBounds(C);
   list().forEach(t => { const p = tpos(t); b.extend(p); const m = new google.maps.Marker({ position: p, map: gmap, title: t.n, label: { text: ini(t.n)[0], color: '#fff', fontWeight: '700' }, icon: dot(sel === t ? 16 : 12, '#14378F') }); m.addListener('click', () => pick(t)); gmk.push(m) });
   if (sel) gmap.panTo(tpos(sel)); else gmap.fitBounds(b, 40);
 }
-function gClear() { GT++; gRt.forEach(x => x.setMap(null)); gRt = [] }
+function gClear() { GT++; if (LF) { lrt.forEach(x => x.remove()); lrt = []; return } gRt.forEach(x => x.setMap(null)); gRt = [] }
 async function gRoute(a, b) { try { const { Route } = await google.maps.importLibrary('routes'); const r = await Route.computeRoutes({ origin: a, destination: b, travelMode: 'DRIVING', fields: ['path', 'durationMillis'] }), q = r.routes[0], g = p => ({ lat: typeof p.lat == 'function' ? p.lat() : p.lat, lng: typeof p.lng == 'function' ? p.lng() : p.lng }); return { path: q.path.map(g), min: Math.max(1, Math.round(q.durationMillis / 6e4)) } } catch (e) { return null } }
 async function gtrack(t, b) {
+  if (LF) return ltrack(t, b);
   gClear(); const tk = GT; gmk.forEach(m => m.setMap(null));
   const o = tpos(t), d = C;
   const mv = new google.maps.Marker({ position: o, map: gmap, label: { text: ini(t.n)[0], color: '#fff', fontWeight: '700' }, icon: dot(15, '#14378F') }); gRt.push(mv);
@@ -727,6 +731,105 @@ async function gtrack(t, b) {
   const path = r ? r.path : [o, d];
   gRt.push(new google.maps.Polyline({ path, strokeColor: '#2F7FE0', strokeWeight: 5, strokeOpacity: .85, map: gmap }));
   const bb = new google.maps.LatLngBounds(); path.forEach(p => bb.extend(p)); gmap.fitBounds(bb, 50);
+}
+
+function mapMe() { if (!GL) return; if (LF) { lme.setLatLng(C); lmap.setView(C) } else { gme.setPosition(C); gmap.setCenter(C) } gpins() }
+
+// ---------- OpenStreetMap (Leaflet) kapag walang Google Maps key ----------
+// Tiles: OpenStreetMap. Address: Nominatim (hindi hihigit sa 1 request kada segundo).
+const LF = !GM && !!window.L;
+const OSM_T = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', OSM_A = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
+const NOM = 'https://nominatim.openstreetmap.org/';
+let lmap, lme, lmk = [], lrt = [];
+const ldot = (txt, px) => window.L.divIcon({ className: 'ldot', html: `<span>${esc(txt)}</span>`, iconSize: [px, px] });
+const osm = (el, z, zc = true) => { const m = window.L.map(el, { zoomControl: zc }).setView(C, z); window.L.tileLayer(OSM_T, { maxZoom: 19, attribution: OSM_A }).addTo(m); return m };
+function initLM() {
+  if (GL || !LF) return;
+  GL = true; $('svg').style.display = 'none'; const el = $('gm'); el.hidden = false;
+  lmap = osm(el, 15);
+  lme = window.L.marker(C, { icon: window.L.divIcon({ className: 'lme', iconSize: [18, 18] }), interactive: false, title: 'Ikaw' }).addTo(lmap);
+  gpins();
+}
+function lpins() {
+  lmap.invalidateSize(); lmk.forEach(m => m.remove()); lmk = [];
+  const pts = [[C.lat, C.lng]];
+  list().forEach(t => { const p = tpos(t); pts.push([p.lat, p.lng]); const m = window.L.marker(p, { icon: ldot(ini(t.n)[0], sel === t ? 34 : 26), title: t.n, keyboard: true }).addTo(lmap); m.on('click', () => pick(t)); lmk.push(m) });
+  if (sel) lmap.panTo(tpos(sel)); else if (pts.length > 1) lmap.fitBounds(pts, { padding: [40, 40], maxZoom: 16 }); else lmap.setView(C, 15);
+}
+function ltrack(t, b) {
+  gClear(); lmap.invalidateSize(); lmk.forEach(m => m.remove()); lmk = [];
+  const o = tpos(t);
+  lrt.push(window.L.marker(o, { icon: ldot(ini(t.n)[0], 32), title: t.n }).addTo(lmap));
+  if (!ACTIVE.includes(b.st)) return lmap.setView(o, 16);
+  lrt.push(window.L.polyline([o, C], { color: '#2F7FE0', weight: 5, opacity: .85, dashArray: '8 8' }).addTo(lmap));
+  lmap.fitBounds([[o.lat, o.lng], [C.lat, C.lng]], { padding: [50, 50], maxZoom: 17 });
+}
+// Gawing maikli at malinaw ang address mula sa Nominatim.
+function addrOf(r) {
+  const a = r.address || {}, road = [a.house_number, a.road || a.pedestrian || a.footway].filter(Boolean).join(' ');
+  const top = r.name && r.name != a.road ? r.name : road || a.neighbourhood || a.suburb || a.village || (r.display_name || '').split(',')[0];
+  const rest = [r.name && r.name != a.road ? road : '', a.neighbourhood, a.suburb || a.quarter || a.village, a.city || a.town || a.municipality, a.state || a.province].filter((x, i, arr) => x && x != top && arr.indexOf(x) == i);
+  return { top: top || 'Napiling lugar', sub: rest.join(', ') };
+}
+const nomFetch = q => fetch(NOM + q + '&accept-language=fil,en', { headers: { 'Accept': 'application/json' } }).then(r => r.ok ? r.json() : null).catch(() => null);
+const PIN_SVG = `<svg viewBox="0 0 44 58" aria-hidden="true"><path d="M22 57C9 40 2 30 2 21a20 20 0 0 1 40 0c0 9-7 19-20 36z" fill="#2F7FE0" stroke="#fff" stroke-width="3"/><circle cx="22" cy="21" r="8" fill="#fff"/></svg>`;
+const ME_SVG = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>`;
+// Google: address mula sa Geocoding API.
+function gAddr(r) {
+  const c = t => (r.address_components || []).find(x => x.types.includes(t))?.long_name || '';
+  const road = [c('street_number'), c('route')].filter(Boolean).join(' '), poi = (r.types || []).some(t => ['premise', 'establishment', 'point_of_interest', 'natural_feature'].includes(t)) ? (r.formatted_address || '').split(',')[0] : '';
+  const top = poi && poi != road ? poi : road || c('neighborhood') || c('sublocality') || (r.formatted_address || '').split(',')[0];
+  const rest = [poi && poi != road ? road : '', c('neighborhood'), c('sublocality_level_1') || c('sublocality'), c('locality'), c('administrative_area_level_2')].filter((x, i, a) => x && x != top && a.indexOf(x) == i);
+  return { top: top || 'Napiling lugar', sub: rest.join(', ') };
+}
+const PICK = {
+  osm: {
+    map(el, start) { const m = osm(el, 18, false); if (start) m.setView(start, 18); return { center: () => m.getCenter(), go: p => m.setView(p, 18), on: (a, b) => { m.on('movestart', a); m.on('moveend', b) }, remove: () => m.remove() } },
+    async reverse(c) { const r = await nomFetch(`reverse?format=jsonv2&zoom=18&addressdetails=1&lat=${c.lat}&lon=${c.lng}`); return r && !r.error ? addrOf(r) : null },
+    async search(q) { return (await nomFetch(`search?format=jsonv2&addressdetails=1&countrycodes=ph&limit=6&q=${encodeURIComponent(q)}`) || []).map(r => ({ ...addrOf(r), lat: +r.lat, lng: +r.lon })) }
+  },
+  google: {
+    map(el, start) { const m = new google.maps.Map(el, { center: start || C, zoom: 18, disableDefaultUI: true, clickableIcons: false, gestureHandling: 'greedy' }); return { center: () => { const c = m.getCenter(); return { lat: c.lat(), lng: c.lng() } }, go: p => { m.setCenter(p); m.setZoom(18) }, on: (a, b) => { m.addListener('dragstart', a); m.addListener('idle', b) }, remove: () => { } } },
+    async reverse(c) { try { const { results } = await new google.maps.Geocoder().geocode({ location: c }); const r = results.find(x => x.types.includes('street_address') || x.types.includes('premise')) || results[0]; return r ? gAddr(r) : null } catch (e) { return null } },
+    async search(q) { try { const { results } = await new google.maps.Geocoder().geocode({ address: q, componentRestrictions: { country: 'PH' } }); return results.slice(0, 6).map(r => ({ ...gAddr(r), lat: r.geometry.location.lat(), lng: r.geometry.location.lng() })) } catch (e) { return [] } }
+  }
+};
+// Buong-screen na mapa: igalaw ang mapa para itapat ang pin sa eksaktong lugar.
+async function addressPicker(start, done) {
+  const E = GM && await loadGM() ? PICK.google : LF ? PICK.osm : null;
+  if (!E) return done(null);
+  const d = document.createElement('div'); d.className = 'pk'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Piliin ang address sa mapa');
+  d.innerHTML = `<div class="pk-map"><div id="pkm"></div><div class="pk-pin">${PIN_SVG}</div><i></i>
+   <div class="pk-top"><button id="pkx" aria-label="Bumalik">‹</button><input id="pkq" type="search" placeholder="Hanapin ang lugar o kalye" enterkeyhint="search" autocomplete="off"></div><div class="pk-res" id="pkr" hidden></div>
+   <button class="pk-me" id="pkme" aria-label="Gamitin ang location ko">${ME_SVG}</button></div>
+   <div class="pk-bot"><h3 id="pkt">Hinahanap ang address…</h3><p id="pks">Igalaw ang mapa para itapat ang pin sa bahay mo.</p>
+   <label>Bahay/Unit no., palapag, o palatandaan (opsyonal)<input id="pkd" placeholder="hal. Unit 2, berdeng gate"></label>
+   <button class="btn" id="pkok">Kumpirmahin ang address</button></div>`;
+  document.body.appendChild(d);
+  const m = E.map($('pkm'), start);
+  let cur = null, tk = 0, tmr = null;
+  const look = () => {
+    const c = m.center(), my = ++tk; $('pkt').textContent = 'Hinahanap ang address…'; d.classList.remove('mv');
+    clearTimeout(tmr); tmr = setTimeout(async () => {
+      const r = await E.reverse(c); if (my != tk) return;
+      cur = { lat: c.lat, lng: c.lng, ...(r || { top: 'Napiling lugar', sub: c.lat.toFixed(5) + ', ' + c.lng.toFixed(5) }) };
+      $('pkt').textContent = cur.top; $('pks').textContent = cur.sub;
+    }, 700);
+  };
+  m.on(() => d.classList.add('mv'), look); look();
+  const close = v => { m.remove(); d.remove(); done(v) };
+  $('pkx').onclick = () => close(null);
+  $('pkme').onclick = async () => { const p = await getLoc(); if (p) m.go(p); else $('pks').textContent = 'Hindi makuha ang location mo. Payagan ang location sa settings ng browser.' };
+  const search = async () => {
+    const q = $('pkq').value.trim(), box = $('pkr'); if (q.length < 3) { box.hidden = true; return }
+    box.hidden = false; box.innerHTML = '<button disabled>Hinahanap…</button>';
+    const rs = await E.search(q);
+    box.innerHTML = rs.length ? rs.map((a, i) => `<button data-r="${i}"><b>${esc(a.top)}</b><small>${esc(a.sub)}</small></button>`).join('') : '<button disabled>Walang nakita. Subukan ang ibang salita.</button>';
+    box.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { const r = rs[b.dataset.r]; box.hidden = true; $('pkq').blur(); m.go({ lat: r.lat, lng: r.lng }) });
+  };
+  $('pkq').onkeydown = e => { if (e.key == 'Enter') { e.preventDefault(); search() } };
+  $('pkq').onsearch = search;
+  $('pkok').onclick = () => { if (!cur) return; const det = $('pkd').value.trim(); close({ ...cur, text: [det, cur.top, cur.sub].filter(Boolean).join(', ') }) };
 }
 
 // ---------- Onboarding (Terms, location) ----------
