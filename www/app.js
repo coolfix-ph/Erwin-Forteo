@@ -207,6 +207,28 @@ function reportView() {
   signFiles('reports', '[data-rf]', 'rf');
 }
 async function signFiles(bucket, sel, key) { for (const a of A.querySelectorAll(sel)) { const { data } = await sb.storage.from(bucket).createSignedUrl(a.dataset[key], 3600); if (data && a.isConnected) a.href = data.signedUrl } }
+// ---------- Admin: mga nag-register na customer ----------
+let CUF = { q: '', s: 'bago' };
+const dfull = t => new Date(t).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
+function custRows() {
+  return PROFILES.filter(u => u.role == 'customer').map(u => { const B = TX.filter(x => x.customer_id == u.id), D = B.filter(x => x.st == 'Natapos'); return { u, n: B.length, d: D.length, g: D.reduce((n, x) => n + total(x), 0), last: B.length ? Math.max(...B.map(x => x.ts)) : 0, act: B.some(x => ACTIVE.includes(x.st)) } });
+}
+function admCu() {
+  const all = custRows(), q = CUF.q.toLowerCase().trim(), wk = Date.now() - 7 * 864e5;
+  const L = all.filter(o => !q || [o.u.name, o.u.email, o.u.phone, o.u.addr].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => CUF.s == 'booking' ? b.n - a.n || b.last - a.last : CUF.s == 'gastos' ? b.g - a.g : CUF.s == 'pangalan' ? String(a.u.name).localeCompare(b.u.name) : tms(b.u.created_at) - tms(a.u.created_at));
+  const nw = all.filter(o => tms(o.u.created_at) >= wk).length, wb = all.filter(o => o.n).length;
+  A.innerHTML = `<div class='panel au wide'><h2>Mga customer</h2><div class='stats s4'><div><b>${all.length}</b><small>Nag-register</small></div><div><b>${nw}</b><small>Bago (7 araw)</small></div><div><b>${wb}</b><small>Nakapag-book na</small></div><div><b>${all.filter(o => o.act).length}</b><small>May aktibong booking</small></div></div>
+  <div class='irow'><input id='cuq' placeholder='Hanapin: pangalan, email, cellphone, address' value='${esc(CUF.q)}' aria-label='Hanapin ang customer'><select id='cus' aria-label='Ayusin ayon sa'>${[['bago', 'Pinakabagong nag-register'], ['booking', 'Pinakamaraming booking'], ['gastos', 'Pinakamalaking nagastos'], ['pangalan', 'Pangalan (A-Z)']].map(([k, l]) => `<option value='${k}' ${CUF.s == k ? 'selected' : ''}>${l}</option>`).join('')}</select><button class='chip' id='cucsv'>I-download (CSV)</button></div>
+  <div class='tw'><table><thead><tr><th>Pangalan</th><th>Cellphone</th><th>Email</th><th>Address</th><th>Nag-register</th><th>Booking</th><th>Natapos</th><th>Kabuuang bayad</th><th>Huling booking</th></tr></thead><tbody>${L.map(o => `<tr><td><b>${esc(o.u.name || '—')}</b>${o.u.google ? ` <small class='mute'>Google</small>` : ''}${o.act ? ` <span class='pill'>aktibo</span>` : ''}</td><td>${o.u.phone ? `<a href='tel:${esc(o.u.phone)}'>${esc(o.u.phone)}</a>` : '—'}</td><td>${o.u.email ? `<a href='mailto:${esc(o.u.email)}'>${esc(o.u.email)}</a>` : '—'}</td><td style='white-space:normal;min-width:160px'>${esc(o.u.addr || '—')}</td><td>${o.u.created_at ? dfull(o.u.created_at) : '—'}</td><td>${o.n}</td><td>${o.d}</td><td>${fmt(o.g)}</td><td>${o.last ? dfull(o.last) : '—'}</td></tr>`).join('') || `<tr><td colspan='9' class='mute'>${all.length ? 'Walang tugma sa hinahanap.' : 'Wala pang nag-register na customer.'}</td></tr>`}</tbody></table></div>
+  <p class='mute' style='font-size:13px'>Ang kabuuang bayad ay mula sa mga natapos na booking (kasama ang booking fee). Admin lang ang nakakakita ng contact details.</p></div>`;
+  $('cuq').oninput = e => { CUF.q = e.target.value; admCu(); const i = $('cuq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length) };
+  $('cus').onchange = e => { CUF.s = e.target.value; admCu() };
+  $('cucsv').onclick = () => {
+    const cell = v => '"' + String(v ?? '').replace(/"/g, '""') + '"', rows = [['Pangalan', 'Cellphone', 'Email', 'Address', 'Nag-register', 'Booking', 'Natapos', 'Kabuuang bayad', 'Huling booking'], ...L.map(o => [o.u.name, o.u.phone, o.u.email, o.u.addr, o.u.created_at ? new Date(o.u.created_at).toISOString().slice(0, 10) : '', o.n, o.d, o.g, o.last ? new Date(o.last).toISOString().slice(0, 10) : ''])];
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })); a.download = `CoolFix-Customers-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+}
 let RPF = 'bago';
 function admRp() {
   const who = id => (PROFILES.find(u => u.id == id) || {}), L = REPS.filter(x => RPF == 'lahat' || x.status == RPF);
@@ -303,7 +325,7 @@ function subscribe() {
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, p => {
       const r = p.new; if (!r) return;
-      if (USER.role == "admin") { const k = PROFILES.findIndex(x => x.id == r.id); if (k >= 0) PROFILES[k] = { ...PROFILES[k], ...r }; else PROFILES.push(r); if ((VIEW == "admin" && ["ov", "tt"].includes(TAB)) || VIEW == "rq") adminView() }
+      if (USER.role == "admin") { const k = PROFILES.findIndex(x => x.id == r.id); if (k >= 0) PROFILES[k] = { ...PROFILES[k], ...r }; else PROFILES.push(r); if ((VIEW == "admin" && ["ov", "tt", "cu"].includes(TAB)) || VIEW == "rq") adminView() }
       if (r.id == USER.id) { const was = USER.doc_status; USER = { ...USER, ...r }; if (VIEW == "dash" && was != r.doc_status) techDash(); return }
       if (r.role != "technician") return;
       const i = TECHS.findIndex(t => t.id == r.id);
@@ -541,9 +563,9 @@ function toast(n) {
 }
 function tabList() {
   const c = USER.role == 'customer', ad = USER.role == 'admin';
-  return ad ? [['ov', 'Overview'], ['rq', 'Requirements'], ['wl', 'Wallet'], ['tx', 'Transaction'], ['tt', 'Technician'], ['rp', 'Reports'], ['sv', 'Serbisyo'], ['pr', 'Base price'], ['rg', 'Rate guide']] : c ? [['find', 'Hanapin'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['cs', 'Report'], ['me', 'Account']] : [['dash', 'Dashboard'], ['wl', 'Wallet'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']];
+  return ad ? [['ov', 'Overview'], ['rq', 'Requirements'], ['wl', 'Wallet'], ['tx', 'Transaction'], ['tt', 'Technician'], ['cu', 'Customers'], ['rp', 'Reports'], ['sv', 'Serbisyo'], ['pr', 'Base price'], ['rg', 'Rate guide']] : c ? [['find', 'Hanapin'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['cs', 'Report'], ['me', 'Account']] : [['dash', 'Dashboard'], ['wl', 'Wallet'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']];
 }
-const ICON = { cs: '<path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v6M12 16.5v.01"/>', rp: '<path d="M5 21V4h11l-1.5 4L16 12H5"/>', ov: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>', rq: '<path d="M14 3H6v18h12V7zM14 3v4h4M9 13l2 2 4-4"/>', tx: '<path d="M4 6h16M4 12h16M4 18h10"/>', tt: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11l2 2 4-4"/>', sv: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>', pr: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01"/>', rg: '<path d="M4 4h12l4 4v12H4zM8 12h8M8 16h5"/>', wl: '<path d="M3 7h16v12H3zM3 7l12-4v4M15 13h2"/>' };
+const ICON = { cu: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>', cs: '<path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v6M12 16.5v.01"/>', rp: '<path d="M5 21V4h11l-1.5 4L16 12H5"/>', ov: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>', rq: '<path d="M14 3H6v18h12V7zM14 3v4h4M9 13l2 2 4-4"/>', tx: '<path d="M4 6h16M4 12h16M4 18h10"/>', tt: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11l2 2 4-4"/>', sv: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>', pr: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01"/>', rg: '<path d="M4 4h12l4 4v12H4zM8 12h8M8 16h5"/>', wl: '<path d="M3 7h16v12H3zM3 7l12-4v4M15 13h2"/>' };
 function tabsBar() {
   bell(); const nb = $('tabs'), ad = USER.role == 'admin'; nb.hidden = false;
   nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${ICON[k] ? `<svg class="ti" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>` : ''}<span>${l}</span>${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}${k == 'rq' && PROFILES.some(u => u.role == 'technician' && u.doc_status == 'sinusuri') ? ' <i class="dot"></i>' : ''}${k == 'rp' && REPS.some(x => x.status == 'bago') ? ' <i class="dot"></i>' : ''}${k == 'cs' && REPS.some(x => x.status != 'bago' && x.admin_note && tms(x.updated_at) > nRead()) ? ' <i class="dot"></i>' : ''}${k == 'wl' && (ad ? TOPS.some(x => x.status == 'sinusuri') : wLow()) ? ' <i class="dot"></i>' : ''}</button>`).join('');
@@ -1088,7 +1110,7 @@ function rateMarket() {
 }
 
 // ---------- Admin ----------
-function adminView() { VIEW = "admin"; TAB == 'rp' ? admRp() : TAB == 'ov' ? admOv() : TAB == 'rq' ? admRq() : TAB == 'tx' ? admTx() : TAB == 'sv' ? admSv() : TAB == 'pr' ? admPr() : TAB == 'wl' ? admWl() : admTc() }
+function adminView() { VIEW = "admin"; TAB == 'cu' ? admCu() : TAB == 'rp' ? admRp() : TAB == 'ov' ? admOv() : TAB == 'rq' ? admRq() : TAB == 'tx' ? admTx() : TAB == 'sv' ? admSv() : TAB == 'pr' ? admPr() : TAB == 'wl' ? admWl() : admTc() }
 let AP = 7;
 function admOv() {
   const DAY = 864e5, t0 = new Date(); t0.setHours(0, 0, 0, 0);
