@@ -187,6 +187,18 @@ create policy "msg insert" on public.messages for insert to authenticated
   with check (exists (select 1 from public.conversations c where c.id = conv_id and (
     (sender = 'c' and c.customer_id = auth.uid()) or (sender = 't' and c.tech_id = auth.uid()))));
 
+-- ============ GRANTS ============
+-- Kailangan ito sa mga bagong Supabase project na hindi na awtomatikong nagbibigay ng access sa Data API.
+grant usage on schema public to anon, authenticated;
+grant select on public.settings to anon, authenticated;
+grant insert, update, delete on public.settings to authenticated;
+grant select, update on public.profiles to authenticated;
+grant select, insert, update on public.bookings to authenticated;
+grant select, insert, update on public.conversations to authenticated;
+grant select, insert on public.messages to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
+grant execute on function public.is_admin() to anon, authenticated;
+
 -- ============ REALTIME ============
 do $$ begin
   begin alter publication supabase_realtime add table public.bookings; exception when others then null; end;

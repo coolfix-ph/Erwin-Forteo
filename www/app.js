@@ -220,11 +220,13 @@ async function start(session) {
   try {
     A.innerHTML = `<div class="panel au"><p class="mute">Naglo-load…</p></div>`;
     let { data: p, error } = await sb.from("profiles").select("*").eq("id", session.user.id).single();
-    if (error || !p) { await sb.auth.signOut(); err = "Hindi ma-load ang account mo. Subukan ulit."; return authView() }
+    if (error || !p) { console.error("profile load", error); await sb.auth.signOut(); err = "Hindi ma-load ang account mo" + (error ? " (" + (error.code || "") + " " + error.message + ")" : " (walang profile)") + ". Subukan ulit o sabihan ang admin."; return authView() }
     if (p.google) p = await applyPending(p);
     USER = p;
     await Promise.all([loadSettings(), loadTX(), loadConvs()]);
-    enter();
+    await enter();
+  } catch (e) {
+    console.error(e); USER = null; err = "May error habang naglo-load: " + (e.message || e); authView();
   } finally { starting = false }
 }
 async function enter() {
