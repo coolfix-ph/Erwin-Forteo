@@ -175,7 +175,7 @@ function authView(notice) {
   VIEW = "auth"; A.hidden = false; $("app").hidden = true; $("lo").hidden = true; $("tabs").hidden = true; $("who").textContent = "";
   const su = mode == "signup", tc = role == "technician";
   A.innerHTML = `<div class="panel au"><img class="logo big" src="img/logo.png" alt="CoolFix">${notice ? `<p class="note">${notice}</p>` : ""}<div class="chips"><button class="chip" aria-pressed="${!su}" data-m="login">Mag-log in</button><button class="chip" aria-pressed="${su}" data-m="signup">Gumawa ng account</button></div>
- ${su ? `<p class="mute" style="margin:0 0 6px">Mag-sign up bilang</p><div class="chips"><button class="chip" aria-pressed="${!tc}" data-r="customer">Customer</button><button class="chip" aria-pressed="${tc}" data-r="technician">Technician</button></div><label>Buong pangalan<input id="f_n" autocomplete="name"></label><label>Cellphone number<input id="f_p" type="tel" placeholder="09XXXXXXXXX" autocomplete="tel"></label>` : ""}
+ ${su ? `<p class="mute" style="margin:0 0 6px">Mag-sign up bilang</p><div class="chips"><button class="chip" aria-pressed="${!tc}" data-r="customer">Customer</button><button class="chip" aria-pressed="${tc}" data-r="technician">Technician</button></div><label>Buong pangalan<input id="f_n" autocomplete="name"></label><label for="f_p">Mobile number</label><div class="ph"><span class="cc"><svg viewBox="0 0 30 15" width="24" height="12" aria-hidden="true"><path fill="#0038A8" d="M0 0h30v7.5H0z"/><path fill="#CE1126" d="M0 7.5h30V15H0z"/><path fill="#fff" d="M0 0l13 7.5L0 15z"/><circle cx="4.6" cy="7.5" r="1.8" fill="#FCD116"/></svg>+63</span><input id="f_p" type="tel" inputmode="numeric" placeholder="9XX XXX XXXX" autocomplete="tel-national" maxlength="13"></div>` : ""}
  <label>Email<input id="f_e" type="email" autocomplete="email"></label>
  <label>Password${su ? " (hindi bababa sa 8 character)" : ""}<input id="f_w" type="password" autocomplete="${su ? "new-password" : "current-password"}"></label>
  ${su && !tc ? `<label>Address<input id="f_a" placeholder="Brgy., Lungsod"></label>` : ""}
@@ -193,6 +193,8 @@ function authView(notice) {
   if ($("gg")) $("gg").onclick = doGoogle;
   if ($("dz")) mountDocs($("dz"));
 }
+// Tinatanggap ang 9171234567, 09171234567 o +639171234567; ini-save bilang 09XXXXXXXXX.
+const normPhone = x => { let d = String(x || "").replace(/\D/g, ""); if (d.startsWith("63")) d = d.slice(2); if (d.startsWith("0")) d = d.slice(1); return d ? "0" + d : "" };
 const busy = (id, on) => { const b = $(id); if (b) b.disabled = on };
 const redirect = () => location.origin + location.pathname;
 function authErr(e) {
@@ -204,11 +206,11 @@ function authErr(e) {
   return "May problema: " + m;
 }
 async function doSignup() {
-  const v = i => ($(i)?.value || "").trim(), n = v("f_n"), p = v("f_p").replace(/[\s-]/g, ""), e = v("f_e").toLowerCase(), w = $("f_w").value, a = v("f_a");
-  const bad = !n ? "Ilagay ang buong pangalan mo." : !/^(09|\+639)\d{9}$/.test(p) ? "Mali ang cellphone number. Gamitin ang format na 09XXXXXXXXX." : !/^\S+@\S+\.\S+$/.test(e) ? "Mali ang email address." : w.length < 8 ? "Masyadong maikli ang password. Gamitin ang hindi bababa sa 8 character." : role == "technician" && !sset.size ? "Pumili ng kahit isang serbisyo." : role == "technician" ? docErr() : "";
+  const v = i => ($(i)?.value || "").trim(), n = v("f_n"), p = normPhone(v("f_p")), e = v("f_e").toLowerCase(), w = $("f_w").value, a = v("f_a");
+  const bad = !n ? "Ilagay ang buong pangalan mo." : !/^09\d{9}$/.test(p) ? "Mali ang mobile number. 10 digit ito na nagsisimula sa 9, hal. 917 123 4567." : !/^\S+@\S+\.\S+$/.test(e) ? "Mali ang email address." : w.length < 8 ? "Masyadong maikli ang password. Gamitin ang hindi bababa sa 8 character." : role == "technician" && !sset.size ? "Pumili ng kahit isang serbisyo." : role == "technician" ? docErr() : "";
   if (bad) { $("er").textContent = err = bad; return }
   busy("go", true);
-  const { data, error } = await sb.auth.signUp({ email: e, password: w, options: { emailRedirectTo: redirect(), data: { role, name: n, phone: p, addr: a, services: [...sset], cert_type: role == "technician" ? CT : null } } });
+  const { data, error } = await sb.auth.signUp({ email: e, password: w, options: { emailRedirectTo: redirect(), data: { role, name: n, phone: p, addr: a, terms_v: localStorage.getItem("cf_terms") || TERMS_V, services: [...sset], cert_type: role == "technician" ? CT : null } } });
   busy("go", false);
   if (error) { $("er").textContent = err = authErr(error); return }
   if (role == "technician") { const fs = {}; docKeys(CT).forEach(k => fs[k] = FILES[k]); await stashDocs(e, { ct: CT, files: fs }) }
@@ -727,6 +729,30 @@ async function gtrack(t, b) {
   const bb = new google.maps.LatLngBounds(); path.forEach(p => bb.extend(p)); gmap.fitBounds(bb, 50);
 }
 
+// ---------- Onboarding (Terms, location) ----------
+const TERMS_V = "2026-11-27";
+const LOC_ART = `<svg viewBox="0 0 240 180" aria-hidden="true"><circle cx="120" cy="92" r="86" fill="#DCEBFC"/><path d="M30 120l60-22 60 22 60-22v52l-60 22-60-22-60 22z" fill="#fff" stroke="#14378F" stroke-width="3" stroke-linejoin="round"/><path d="M90 98v52M150 120v52M48 128l36 14M104 104l40 30M160 112l40-10M170 150l30-12" stroke="#9DB8E3" stroke-width="3" stroke-linecap="round"/><path d="M118 142l-8 6" stroke="#2F7FE0" stroke-width="6" stroke-linecap="round"/><path d="M60 134l18-6 10 8-16 6z" fill="#8DD3A5"/><path d="M168 142l20-7 4 10-18 6z" fill="#7FB8F5"/><path d="M120 128c-22-26-34-42-34-58a34 34 0 0 1 68 0c0 16-12 32-34 58z" fill="#2F7FE0" stroke="#14378F" stroke-width="3"/><circle cx="120" cy="70" r="20" fill="#fff"/><path d="M120 56v28M108 63l24 14M108 77l24-14" stroke="#2F7FE0" stroke-width="3.2" stroke-linecap="round"/></svg>`;
+const SHIELD_ART = `<svg viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="92" fill="#DCEBFC"/><path d="M100 30l56 20v44c0 38-24 64-56 76-32-12-56-38-56-76V50z" fill="#fff" stroke="#14378F" stroke-width="5" stroke-linejoin="round"/><path d="M100 46l40 14v34c0 28-17 48-40 58z" fill="#2F7FE0" opacity=".18"/><path d="M76 100l17 17 33-36" fill="none" stroke="#2F7FE0" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const onb = on => document.body.classList.toggle("onb", on);
+function termsView() {
+  VIEW = "terms"; onb(true); A.hidden = false; $("app").hidden = true; $("tabs").hidden = true;
+  A.innerHTML = `<div class="ob"><div class="ob-art">${SHIELD_ART}</div><h2>Basahin at tanggapin ang Terms at Privacy Policy ng CoolFix</h2><p class="mute">Sa pagpindot ng "I Agree", pumapayag ka sa <a href="terms.html" target="_blank">Terms of Use</a> at <a href="privacy.html" target="_blank">Privacy Policy</a> ng CoolFix. Pinoprotektahan namin ang impormasyon mo ayon sa Data Privacy Act of 2012.</p><button class="btn ob-go" id="agree">I Agree</button></div>`;
+  $("agree").onclick = () => { localStorage.setItem("cf_terms", TERMS_V); locSheet() };
+}
+async function locSheet() {
+  onb(false);
+  let st = "prompt"; try { st = (await navigator.permissions.query({ name: "geolocation" })).state } catch (e) { }
+  if (st != "prompt" || localStorage.getItem("cf_loc")) return authView();
+  authView();
+  const d = document.createElement("div"); d.className = "sheet-bg"; d.id = "lsh";
+  d.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="lst"><div class="ob-art">${LOC_ART}</div><h2 id="lst">Payagan ang location</h2><p class="mute">Para makita ang pinakamalapit na technician at ang eksaktong address mo, kailangan namin ang location ng device mo.</p><button class="btn ob-go" id="lok">Payagan ang location</button><button class="chip" id="lno" style="border:0;margin-top:8px">Mamaya na</button></div>`;
+  document.body.appendChild(d);
+  const close = () => { localStorage.setItem("cf_loc", "1"); d.remove() };
+  $("lok").onclick = async () => { $("lok").disabled = true; const p = await getLoc(); if (p) C = p; close() };
+  $("lno").onclick = close;
+}
+const needTerms = () => localStorage.getItem("cf_terms") != TERMS_V;
+
 // ---------- Boot ----------
 let RECOVERY = /type=recovery/.test(location.hash);
 sb.auth.onAuthStateChange((ev, session) => {
@@ -736,5 +762,5 @@ sb.auth.onAuthStateChange((ev, session) => {
 (async () => {
   if (RECOVERY) return;
   const { data } = await sb.auth.getSession();
-  if (data.session) start(data.session); else authView();
+  if (data.session) start(data.session); else if (needTerms()) termsView(); else authView();
 })();

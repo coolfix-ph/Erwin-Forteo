@@ -13,8 +13,12 @@ const ok = (c, m) => { if (!c) throw new Error("FAIL: " + m); console.log("ok -"
   await p.route("**/vendor/supabase.js", r => r.fulfill({ contentType: "application/javascript", body: fs.readFileSync(path.join(__dirname, "mock-supabase.js"), "utf8") }));
   await p.route("**/config.js", r => r.fulfill({ contentType: "application/javascript", body: 'window.COOLFIX_CONFIG={supabaseUrl:"x",supabaseAnonKey:"y"}' }));
   await p.goto(url); await p.waitForTimeout(300);
+  ok((await p.textContent("#auth")).includes("Terms"), "first open shows Terms and Privacy");
+  await p.click("#agree"); await p.waitForTimeout(200);
+  if (await p.$("#lno")) await p.click("#lno");
+  await p.reload(); await p.waitForTimeout(300); ok(await p.$("[data-m=signup]"), "Terms are not asked again");
   await p.click("[data-m=signup]"); await p.click("[data-r=technician]");
-  await p.fill("#f_n", "Rodel Santos"); await p.fill("#f_p", "09171234567"); await p.fill("#f_e", "rodel@test.com"); await p.fill("#f_w", "password123");
+  await p.fill("#f_n", "Rodel Santos"); await p.fill("#f_p", "917 123 4567"); await p.fill("#f_e", "rodel@test.com"); await p.fill("#f_w", "password123");
   await p.click('[data-v="Aircon cleaning"]'); await p.fill("#f_a", "Quezon City"); await p.click("#go"); await p.waitForTimeout(200);
   ok((await p.textContent("#er")).includes("NC II"), "technician sign-up requires documents");
   await p.click("[data-ct=dti_bir]"); await p.setInputFiles("#fd_dti", path.join(__dirname, "fixtures/permit.pdf")); await p.click("#go"); await p.waitForTimeout(200);
