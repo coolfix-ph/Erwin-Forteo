@@ -106,7 +106,7 @@ const takeDocs = email => idb('readonly', s => s.get(email));
 const dropDocs = email => idb('readwrite', s => s.delete(email));
 
 // ---------- Location helpers ----------
-let C = { lat: 14.676, lng: 121.0437 };
+let C = { lat: 14.676, lng: 121.0437 }, CK = false; // CK: totoong lokasyon na ng customer (GPS o pinili sa mapa)
 const KM = .09;
 const hv = (a, b) => { const R = 6371, r = Math.PI / 180, dl = (b.lat - a.lat) * r, dn = (b.lng - a.lng) * r, h = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)) };
 const ll = (x, y) => ({ lat: C.lat + (50 - y) * 0.000808, lng: C.lng + (x - 50) * 0.000836 });
@@ -233,7 +233,7 @@ function refresh(kind) {
 
 // ---------- Auth ----------
 function authView(notice) {
-  VIEW = "auth"; A.hidden = false; $("app").hidden = true; $("lo").hidden = true; $("tabs").hidden = true; $("who").textContent = ""; if ($("bell")) $("bell").hidden = true; const ts = $("toast"); if (ts) ts.remove();
+  VIEW = "auth"; A.hidden = false; $("app").hidden = true; $("lo").hidden = true; $("tabs").hidden = true; $("who").textContent = ""; if ($("bell")) $("bell").hidden = true; closeTM(); const ts = $("toast"); if (ts) ts.remove();
   const su = mode == "signup", tc = role == "technician";
   A.innerHTML = `<div class="panel au"><img class="logo big" src="img/logo.png" alt="CoolFix">${notice ? `<p class="note">${notice}</p>` : ""}<div class="chips"><button class="chip" aria-pressed="${!su}" data-m="login">Mag-log in</button><button class="chip" aria-pressed="${su}" data-m="signup">Gumawa ng account</button></div>
  ${su ? `<p class="mute" style="margin:0 0 6px">Mag-sign up bilang</p><div class="chips"><button class="chip" aria-pressed="${!tc}" data-r="customer">Customer</button><button class="chip" aria-pressed="${tc}" data-r="technician">Technician</button></div><label>Buong pangalan<input id="f_n" autocomplete="name"></label><label for="f_p">Mobile number</label><div class="ph"><span class="cc"><svg viewBox="0 0 30 15" width="24" height="12" aria-hidden="true"><path fill="#0038A8" d="M0 0h30v7.5H0z"/><path fill="#CE1126" d="M0 7.5h30V15H0z"/><path fill="#fff" d="M0 0l13 7.5L0 15z"/><circle cx="4.6" cy="7.5" r="1.8" fill="#FCD116"/></svg>+63</span><input id="f_p" type="tel" inputmode="numeric" placeholder="9XX XXX XXXX" autocomplete="tel-national" maxlength="13"></div>` : ""}
@@ -350,7 +350,7 @@ async function enter() {
   TAB = u.role == "customer" ? "find" : u.role == "admin" ? "ov" : "dash"; CUR = null;
   if (u.role == "customer") {
     await Promise.all([loadTechs(), loadStats()]); show(); initGM();
-    getLoc().then(p => { if (p) { C = p; TECHS.forEach(place); if (VIEW == "home") home(); if (GL) mapMe() } });
+    getLoc().then(p => { if (p) { C = p; CK = true; TECHS.forEach(place); if (VIEW == "home") home(); if (GL) mapMe() } });
   } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs(), loadTopups()]); show() }
   else { await loadWallet(); syncWatch(); show() }
 }
@@ -576,7 +576,7 @@ function pick(t) {
   drawSched();
   if (sb.rpc) sb.rpc("tech_busy", { t: t.id }).then(({ data }) => { BUSY = (data || []).map(x => new Date(typeof x == 'object' && x ? x.tech_busy : x).getTime()).filter(x => x); if (ST != 'now' && ST && !slotOk(ST, BUSY)) ST = null; drawSched() });
   $("bc").onclick = home; $("mg").onclick = () => openChat(t);
-  if ($("adm")) $("adm").onclick = () => addressPicker(C, v => { if (!v) return; $("ad").value = v.text; C = { lat: v.lat, lng: v.lng }; TECHS.forEach(place); if (GL) mapMe() });
+  if ($("adm")) $("adm").onclick = () => addressPicker(C, v => { if (!v) return; $("ad").value = v.text; C = { lat: v.lat, lng: v.lng }; CK = true; TECHS.forEach(place); if (GL) mapMe() });
   $("bk").onclick = async () => {
     const ad = $("ad").value.trim(); if (ad.length < 5) { $("be").textContent = "Ilagay ang buong address mo."; return }
     if (ST == null) { $("be").textContent = "Pumili ng oras sa kalendaryo."; return }
@@ -584,7 +584,7 @@ function pick(t) {
     const extras = OC.filter((o, i) => !o.a && on(i)).map(o => o.n);
     busy("bk", true);
     // Ang server ang nagkukuwenta ng presyo mula sa items; ang amt dito ay pantantiya lang.
-    const { data, error } = await sb.from("bookings").insert({ customer_id: USER.id, tech_id: t.id, cust_name: USER.name, tech_name: t.n, svc: CART.map(cartLine).join('; ') + (extras.length ? ' + ' + extras.join(', ') : ''), items: { cart: CART.map(x => ({ c: x.c, n: x.n, q: x.q })), extras }, address: ad, sched: ST == 'now' ? `Ngayon (~${eta(t)} min)` : `${dabs(ST)} · ${tlabel(ST)}`, sched_at: ST == 'now' ? null : new Date(ST).toISOString(), amt: est()[0], booking_fee: FEE, pay_method: 'cash' }).select().single();
+    const { data, error } = await sb.from("bookings").insert({ customer_id: USER.id, tech_id: t.id, cust_name: USER.name, tech_name: t.n, svc: CART.map(cartLine).join('; ') + (extras.length ? ' + ' + extras.join(', ') : ''), items: { cart: CART.map(x => ({ c: x.c, n: x.n, q: x.q })), extras }, address: ad, ...(CK ? { cust_lat: C.lat, cust_lng: C.lng } : {}), sched: ST == 'now' ? `Ngayon (~${eta(t)} min)` : `${dabs(ST)} · ${tlabel(ST)}`, sched_at: ST == 'now' ? null : new Date(ST).toISOString(), amt: est()[0], booking_fee: FEE, pay_method: 'cash' }).select().single();
     busy("bk", false);
     if (error) { $("be").textContent = "Hindi na-book: " + error.message; return }
     if (!USER.addr) { USER.addr = ad; sb.from("profiles").update({ addr: ad }).eq("id", USER.id) }
@@ -732,6 +732,7 @@ function techDash() {
   ${b.extra_amt ? `<p class="mute" style="margin:0 0 6px;font-size:13px">Kasama ang aprubadong dagdag: ${fmt(b.extra_amt)} (${esc(b.extra_note)})</p>` : ''}
   ${b.st == 'Bago' && low ? `<p class="note">Kulang ang wallet mo para tanggapin ito. <button class="chip" data-gowl>Mag-top up</button></p>` : ''}
   ${b.st == 'Bago' && b.sched_at ? acc(b.id, 'Tinanggap', 'Tanggapin ang schedule') + `<button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Bago' ? acc(b.id, 'Papunta na', 'Tanggapin at pumunta') + `<button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Tinanggap' ? `<button class="btn" data-s="Papunta na" data-b="${b.id}">Papunta na ako</button>` : b.st == 'Papunta na' ? `<button class="btn" data-s="Dumating na" data-b="${b.id}">Dumating na ako</button>` : jobEnd(b)}
+  ${['Tinanggap', 'Papunta na', 'Dumating na'].includes(b.st) ? `<button class="btn alt mapb" data-map="${b.id}"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 22c-5-6.5-8-10.5-8-14a8 8 0 0 1 16 0c0 3.5-3 7.5-8 14z" fill="currentColor"/><circle cx="12" cy="8" r="3" fill="var(--panel)"/></svg> Mapa at direksyon papunta kay ${esc(first(b.cust_name))}</button>` : ''}
   <button class="btn alt" data-c="${b.id}">Mag-message sa customer</button></div>`;
   // Pagdating sa customer: quote para sa dagdag na gawa o parte, tapos tapusin ang trabaho at singilin ang halagang nasa app.
   const jobEnd = b => b.q_status == 'hinihintay' ? `<div class="quote"><b>Hinihintay ang sagot ng customer sa quote mo</b><p class="mute" style="margin:4px 0">+${fmt(b.q_amt)} · ${esc(b.q_note)}</p><p class="mute" style="font-size:13px;margin:0">Huwag munang ituloy ang dagdag na gawa hangga't hindi inaaprubahan.</p></div>`
@@ -770,7 +771,8 @@ function techDash() {
     if (error) { b.disabled = false; $("de").textContent = "Hindi naipadala: " + error.message; return }
     const { data } = await sb.from("bookings").select("*").eq("id", id).single(); if (data) upsertTx(data); techDash();
   });
-  A.querySelectorAll("[data-s]").forEach(b => b.onclick = async () => { b.disabled = true; const r = await setStatus(+b.dataset.b, b.dataset.s); if (r) { $("de").textContent = r; b.disabled = false } });
+  A.querySelectorAll("[data-s]").forEach(b => b.onclick = async () => { b.disabled = true; const r = await setStatus(+b.dataset.b, b.dataset.s); if (r) { $("de").textContent = r; b.disabled = false } else if (b.dataset.s == 'Papunta na') { const j = TX.find(x => x.id == +b.dataset.b); if (j) techMap(j) } });
+  A.querySelectorAll("[data-map]").forEach(b => b.onclick = () => { const j = TX.find(x => x.id == +b.dataset.map); if (j) techMap(j) });
   A.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { const j = TX.find(x => x.id == b.dataset.c); openChatWithCustomer(j) });
   A.querySelectorAll("#tcal [data-day]").forEach(b => b.onclick = () => { TD = b.dataset.day; techDash(); const c = $("tcal"); if (c) c.scrollIntoView({ block: "nearest" }) });
   A.querySelectorAll("[data-job]").forEach(b => b.onclick = () => { const c = $("job-" + b.dataset.job); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("flash"); setTimeout(() => c.classList.remove("flash"), 1200) } });
@@ -1150,6 +1152,56 @@ function admSv() {
 
 // ---------- Google Maps (optional) ----------
 const GM = !!CFG.mapsKey;
+// ---------- Mapa ng technician papunta sa customer ----------
+// Live na lokasyon ng technician (GPS), pin ng customer, ruta (Routes API) at link sa Google Maps para sa turn-by-turn.
+let TM = null;
+const navUrl = (d, addr) => 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' + encodeURIComponent(d ? d.lat + ',' + d.lng : addr);
+async function custPos(b) {
+  if (b.cust_lat != null && b.cust_lng != null) return { lat: b.cust_lat, lng: b.cust_lng, exact: true };
+  try { const { Geocoder } = await google.maps.importLibrary('geocoding'); const { results } = await new Geocoder().geocode({ address: b.address, region: 'ph' }); const l = results[0]?.geometry.location; if (l) return { lat: l.lat(), lng: l.lng(), exact: false } } catch (e) { }
+  return null;
+}
+function closeTM() { if (!TM) return; if (TM.w != null) navigator.geolocation.clearWatch(TM.w); TM.el.remove(); TM = null; document.body.style.overflow = '' }
+async function techMap(b) {
+  closeTM();
+  const el = document.createElement('div'); el.className = 'tmap'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Mapa papunta sa customer');
+  el.innerHTML = `<div class="tm-h"><button class="chip" id="tmx">‹ Bumalik</button><div class="nt"><b>Papunta kay ${esc(first(b.cust_name))}</b><small>${esc(b.address)}</small></div></div><div id="tmm" class="tm-m"></div>
+  <div class="tm-f"><div class="tm-s" id="tms" role="status">Kinukuha ang lokasyon mo…</div><a class="btn" id="tmn" target="_blank" rel="noopener" href="${navUrl(null, b.address)}">Simulan ang navigation sa Google Maps</a><div class="tm-a" id="tma"></div></div>`;
+  document.body.appendChild(el); document.body.style.overflow = 'hidden';
+  TM = { el, b, w: null, me: null, line: null, at: 0, from: null };
+  $("tmx").onclick = closeTM;
+  const acts = () => { const j = TX.find(x => x.id == b.id) || b; $("tma").innerHTML = j.st == 'Tinanggap' ? `<button class="btn alt" id="tmgo">Papunta na ako (sabihan ang customer)</button>` : j.st == 'Papunta na' ? `<button class="btn alt" id="tmgo">Dumating na ako</button>` : '';
+    const g = $("tmgo"); if (g) g.onclick = async () => { g.disabled = true; const r = await setStatus(j.id, j.st == 'Tinanggap' ? 'Papunta na' : 'Dumating na'); if (r) { $("tms").textContent = r; g.disabled = false; return } if (j.st == 'Papunta na' || (TX.find(x => x.id == j.id) || {}).st == 'Dumating na') closeTM(); else acts() } };
+  acts();
+  if (!GM || !await loadGM()) { $("tmm").innerHTML = `<p class="mute" style="padding:16px">Hindi ma-load ang mapa. Gamitin ang button sa ibaba para buksan ang Google Maps.</p>`; $("tms").textContent = ''; return }
+  if (!TM || TM.el != el) return;
+  const map = new google.maps.Map($("tmm"), { center: C, zoom: 14, disableDefaultUI: true, zoomControl: true, clickableIcons: false, gestureHandling: 'greedy' });
+  const d = await custPos(b); if (!TM || TM.el != el) return;
+  if (d) { new google.maps.Marker({ position: d, map, title: b.cust_name, icon: svgPin(34, '#D93636', 'C'), zIndex: 3 }); $("tmn").href = navUrl(d) }
+  const draw = async (o, force) => {
+    if (!TM || TM.el != el) return;
+    if (!TM.me) TM.me = new google.maps.Marker({ position: o, map, title: 'Ikaw', icon: svgPin(30, '#2F7FE0', '', true), zIndex: 2 }); else TM.me.setPosition(o);
+    if (!d) { map.setCenter(o); $("tms").innerHTML = `Hindi makita sa mapa ang address. Gamitin ang Google Maps sa ibaba.`; return }
+    const km = hv(o, d);
+    // I-update ang ruta kapag lumayo na ng 150 m o lumipas ang 60 segundo.
+    if (force || !TM.from || hv(TM.from, o) > .15 || Date.now() - TM.at > 60e3) {
+      TM.from = o; TM.at = Date.now();
+      const r = await gRoute(o, d); if (!TM || TM.el != el) return;
+      const path = r ? r.path : [o, d];
+      if (TM.line) TM.line.setMap(null);
+      TM.line = new google.maps.Polyline({ path, strokeColor: '#2F7FE0', strokeWeight: 6, strokeOpacity: .9, map, ...(r ? {} : { strokeOpacity: 0, icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: '14px' }] }) });
+      TM.min = r ? r.min : Math.max(4, Math.round(km * 5 + 3));
+      if (force) { const bb = new google.maps.LatLngBounds(); path.forEach(p => bb.extend(p)); bb.extend(o); map.fitBounds(bb, 60) }
+    }
+    $("tms").innerHTML = km < .08 ? `<b>Nandito ka na sa lokasyon ng customer.</b>` : `<b>${km.toFixed(1)} km</b> · mga <b>${TM.min} min</b> bago dumating${d.exact ? '' : ' <small>(tinatayang lokasyon mula sa address)</small>'}`;
+  };
+  // Ipakita agad gamit ang huling naka-save na lokasyon, tapos palitan kapag may bagong GPS.
+  if (USER.lat != null) await draw({ lat: USER.lat, lng: USER.lng }, true); else if (d) { map.setCenter(d); map.setZoom(15) }
+  const p = await getLoc(); if (!TM || TM.el != el) return;
+  if (p) await draw(p, USER.lat == null);
+  else if (USER.lat == null && d) $("tms").textContent = 'Hindi makuha ang lokasyon mo. Payagan ang location para makita ang ruta.';
+  if (navigator.geolocation) TM.w = navigator.geolocation.watchPosition(q => draw({ lat: q.coords.latitude, lng: q.coords.longitude }), () => { }, { enableHighAccuracy: true, maximumAge: 5000 });
+}
 let GL = false, gmap, gme, gmk = [], gRt = [], GT = 0;
 // Marker bilang SVG (walang ibang file na kailangang i-load).
 const svgPin = (px, c, txt, ring) => { const r = px / 2, v = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}">${ring ? `<circle cx="${r}" cy="${r}" r="${r}" fill="${c}" fill-opacity=".25"/>` : ''}<circle cx="${r}" cy="${r}" r="${ring ? r * .45 : r - 1.5}" fill="${c}" stroke="#fff" stroke-width="${ring ? 3 : 2.5}"/>${txt ? `<text x="${r}" y="${r}" dy=".35em" text-anchor="middle" font-family="Arial,sans-serif" font-weight="700" font-size="${px * .42}" fill="#fff">${txt.replace(/[<&]/g, '')}</text>` : ''}</svg>`; return { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(v), scaledSize: new google.maps.Size(px, px), anchor: new google.maps.Point(r, r) } };
@@ -1305,7 +1357,7 @@ async function locSheet() {
   d.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="lst"><div class="ob-art">${LOC_ART}</div><h2 id="lst">Payagan ang location</h2><p class="mute">Para makita ang pinakamalapit na technician at ang eksaktong address mo, kailangan namin ang location ng device mo.</p><button class="btn ob-go" id="lok">Payagan ang location</button><button class="chip" id="lno" style="border:0;margin-top:8px">Mamaya na</button></div>`;
   document.body.appendChild(d);
   const close = () => { localStorage.setItem("cf_loc", "1"); d.remove() };
-  $("lok").onclick = async () => { $("lok").disabled = true; const p = await getLoc(); if (p) C = p; close() };
+  $("lok").onclick = async () => { $("lok").disabled = true; const p = await getLoc(); if (p) { C = p; CK = true } close() };
   $("lno").onclick = close;
 }
 const needTerms = () => localStorage.getItem("cf_terms") != TERMS_V;
