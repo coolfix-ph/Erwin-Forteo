@@ -173,7 +173,7 @@ async function loadConvs() {
   const ids = (cs || []).map(c => c.id);
   let ms = [];
   if (ids.length) { const r = await sb.from("messages").select("*").in("conv_id", ids).order("created_at"); ms = r.data || [] }
-  CONVS = (cs || []).map(c => ({ ...c, m: ms.filter(m => m.conv_id == c.id).map(m => ({ id: m.id, f: m.sender, t: m.body, ts: new Date(m.created_at).getTime() })) }));
+  CONVS = (cs || []).map(c => ({ ...c, m: ms.filter(m => m.conv_id == c.id).map(m => ({ id: m.id, f: m.sender, t: m.body, file: m.file || null, ts: new Date(m.created_at).getTime() })) }));
 }
 async function loadProfiles() { const { data } = await sb.rpc("admin_profiles"); PROFILES = data || [] }
 
@@ -195,7 +195,7 @@ function subscribe() {
     .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, p => { if (p.new && p.new.id) { const pr = TX.find(x => x.id == p.new.id), was = pr && pr.st, wq = pr && pr.q_status, b = upsertTx(p.new); liveNote(b, pr ? was : null, wq); onBooking(b) } })
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, async p => {
       const m = p.new, c = CONVS.find(x => x.id == m.conv_id);
-      if (!c) { await loadConvs() } else if (!c.m.some(x => x.id == m.id)) c.m.push({ id: m.id, f: m.sender, t: m.body, ts: new Date(m.created_at).getTime() });
+      if (!c) { await loadConvs() } else if (!c.m.some(x => x.id == m.id)) c.m.push({ id: m.id, f: m.sender, t: m.body, file: m.file || null, ts: new Date(m.created_at).getTime() });
       refresh("msg");
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, p => {
@@ -866,13 +866,29 @@ function markRead(c) {
   if (unreadOf(c) == 0 && c[col]) return;
   c[col] = now; sb.from("conversations").update({ [col]: now }).eq("id", c.id).then(() => { }); tabsBar();
 }
+// ---------- Attachment sa chat ----------
+// Nasa private na bucket ang file. Kumukuha ng pansamantalang link (1 oras) kapag ipinapakita.
+const FMAX = 10 * 1048576, FURL = {};
+const isImg = f => /^image\//.test(f.type) && !/hei[cf]/.test(f.type);
+const fsize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+const fileBubble = m => isImg(m.file) ? `<a class="fimg" data-fp="${esc(m.file.path)}" target="_blank" rel="noopener" aria-label="Buksan ang larawan ${esc(m.file.name)}"><span class="fload">Naglo-load ng larawan…</span></a>`
+  : `<a class="fdoc" data-fp="${esc(m.file.path)}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M14 3H6v18h12V7zM14 3v4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg><span><b>${esc(m.file.name)}</b><small>${fsize(m.file.size || 0)} · i-tap para buksan</small></span></a>`;
+async function fillFiles(root) {
+  for (const a of root.querySelectorAll('[data-fp]')) {
+    const p = a.dataset.fp; let u = FURL[p];
+    if (!u || u.exp < Date.now()) { const { data } = await sb.storage.from('chat-files').createSignedUrl(p, 3600); if (!data) { a.querySelector('.fload') && (a.querySelector('.fload').textContent = 'Hindi mabuksan ang file'); continue } u = FURL[p] = { url: data.signedUrl, exp: Date.now() + 3300e3 } }
+    if (!a.isConnected) continue;
+    a.href = u.url;
+    if (a.classList.contains('fimg') && !a.querySelector('img')) { const im = new Image(); im.alt = 'Larawan'; im.onload = () => { const ms = $('ms'); const near = ms && ms.scrollHeight - ms.scrollTop - ms.clientHeight < 260; a.innerHTML = ''; a.appendChild(im); if (near) ms.scrollTop = ms.scrollHeight }; im.src = u.url }
+  }
+}
 function chatView(f) {
   const c = CONVS.find(x => x.id == CUR), r = rk();
   if (!c) { CUR = null; return inbox() }
   VIEW = "chat"; markRead(c);
   const keep = $('mi') ? $('mi').value : '';
   const n = r == 'c' ? c.tech_name : c.cust_name, qr = r == 't' ? ['Papunta na po ako.', 'Ilang unit po ang aircon?', 'Pwede po ba bukas ng umaga?'] : ['Magkano po ang cleaning?', 'Pwede po ba ngayon?', 'Salamat po!'];
-  A.innerHTML = `<div class='panel au chat'><div class='ch-h'><button class='chip' id='cb'>‹ Bumalik</button><div class='av'>${esc(ini(n))}</div><b>${esc(n)}</b></div><div class='msgs' id='ms'>${c.m.map(m => `<div class='b ${m.f == r ? 'me' : 'them'}'>${esc(m.t)}<small>${tm(m.ts)}</small></div>`).join('') || '<p class="mute">Simulan ang usapan. Mag-hi!</p>'}</div><div class='chips' style='margin:8px 0'>${qr.map(q => `<button class='chip' data-q='${esc(q)}'>${esc(q)}</button>`).join('')}</div><div class='send'><input id='mi' placeholder='Mag-type ng mensahe' maxlength='500' autocomplete='off'><button class='btn' id='sn' style='width:auto;margin:0;padding:10px 16px'>Ipadala</button></div><p class="err" id="ce" role="alert"></p></div>`;
+  A.innerHTML = `<div class='panel au chat'><div class='ch-h'><button class='chip' id='cb'>‹ Bumalik</button><div class='av'>${esc(ini(n))}</div><b>${esc(n)}</b></div><div class='msgs' id='ms'>${c.m.map(m => `<div class='b ${m.f == r ? 'me' : 'them'}${m.file ? ' fb' : ''}'>${m.file ? fileBubble(m) : esc(m.t)}<small>${tm(m.ts)}</small></div>`).join('') || '<p class="mute">Simulan ang usapan. Mag-hi!</p>'}</div><div class='chips' style='margin:8px 0'>${qr.map(q => `<button class='chip' data-q='${esc(q)}'>${esc(q)}</button>`).join('')}</div><div class='send'><label class='att' title='Mag-attach ng larawan o file' aria-label='Mag-attach ng larawan o file'><input type='file' id='mf' accept='image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,video/mp4,video/quicktime' hidden><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label><input id='mi' placeholder='Mag-type ng mensahe' maxlength='500' autocomplete='off'><button class='btn' id='sn' style='width:auto;margin:0;padding:10px 16px'>Ipadala</button></div><p class="err" id="ce" role="alert"></p></div>`;
   const ms = $('ms'); ms.scrollTop = ms.scrollHeight;
   $('mi').value = keep;
   const go = async t => {
@@ -886,6 +902,20 @@ function chatView(f) {
   $('cb').onclick = () => { CUR = null; show() };
   $('sn').onclick = () => go($('mi').value); $('mi').onkeydown = e => { if (e.key == 'Enter') go($('mi').value) };
   A.querySelectorAll('[data-q]').forEach(b => b.onclick = () => go(b.dataset.q));
+  $('mf').onchange = async e => {
+    const fl = e.target.files[0]; e.target.value = ''; if (!fl) return;
+    if (fl.size > FMAX) { $('ce').textContent = `Masyadong malaki ang file (hanggang ${FMAX / 1048576} MB lang).`; return }
+    $('ce').textContent = ''; $('sn').disabled = true; $('sn').textContent = 'Ina-upload…';
+    const ext = (fl.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5) || 'bin', path = `${c.id}/${USER.id}-${Date.now()}.${ext}`;
+    const up = await sb.storage.from('chat-files').upload(path, fl, { contentType: fl.type || 'application/octet-stream' });
+    if (up.error) { $('sn').disabled = false; $('sn').textContent = 'Ipadala'; $('ce').textContent = 'Hindi na-upload: ' + up.error.message; return }
+    const file = { path, name: fl.name.slice(0, 120), type: fl.type || '', size: fl.size };
+    const { data, error } = await sb.from("messages").insert({ conv_id: c.id, sender: r, body: '📎 ' + file.name, file }).select().single();
+    if (error) { $('sn').disabled = false; $('sn').textContent = 'Ipadala'; $('ce').textContent = "Hindi naipadala: " + error.message; return }
+    if (!c.m.some(x => x.id == data.id)) c.m.push({ id: data.id, f: r, t: data.body, file: data.file || file, ts: new Date(data.created_at).getTime() });
+    chatView();
+  };
+  fillFiles(A);
   if (f) $('mi').focus();
 }
 
