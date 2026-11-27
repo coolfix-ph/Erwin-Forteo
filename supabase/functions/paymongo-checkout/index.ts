@@ -2,7 +2,7 @@
 // Tinatawag ng app (naka-login na technician). Ibinabalik ang checkout_url na bubuksan ng app.
 // Kailangang secret sa Supabase > Edge Functions > Secrets: PAYMONGO_SECRET_KEY (sk_test_... muna, saka sk_live_...).
 // Naka-off ang JWT check ng Supabase (--no-verify-jwt); ang function mismo ang nagche-check ng login sa ibaba.
-// Opsyonal: PAYMONGO_METHODS (hal. "gcash,paymaya,card"), APP_URL (hal. "https://coollfix.com/").
+// Paraan ng bayad: settings "paymongo_methods" (hal. ["qrph"]) o PAYMONGO_METHODS (hal. "gcash,paymaya,card"), APP_URL (hal. "https://coollfix.com/").
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const CORS = {
@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
   const { data: prof } = await admin.from("profiles").select("id, role, name, email").eq("id", uid).single();
   if (!prof || prof.role !== "technician") return out({ error: "Technician lang ang pwedeng mag-top up." }, 403);
 
-  const { data: sets } = await admin.from("settings").select("key, value").in("key", ["paymongo_on", "paymongo_testers"]);
+  const { data: sets } = await admin.from("settings").select("key, value").in("key", ["paymongo_on", "paymongo_testers", "paymongo_methods"]);
   const sv = (k: string) => (sets ?? []).find((x) => x.key === k)?.value;
   const testers = Array.isArray(sv("paymongo_testers")) ? sv("paymongo_testers") as string[] : [];
   if (sv("paymongo_on") !== true && !testers.includes(uid)) return out({ error: "Naka-off pa ang online na top-up." }, 403);
@@ -63,7 +63,11 @@ Deno.serve(async (req) => {
   if ((count ?? 0) >= 5) return out({ error: "Marami ka pang hindi natapos na bayad. Subukan ulit mamaya." }, 429);
 
   const app = (Deno.env.get("APP_URL") ?? "https://coollfix.com/").replace(/\/?$/, "/");
-  const methods = (Deno.env.get("PAYMONGO_METHODS") ?? "gcash,paymaya,card").split(",").map((s) => s.trim()).filter(Boolean);
+  // Paraan ng bayad: settings.paymongo_methods (hal. ["qrph"]), o PAYMONGO_METHODS, o default
+  const sm = sv("paymongo_methods");
+  const methods = (Array.isArray(sm) && sm.length ? sm.map(String)
+    : (Deno.env.get("PAYMONGO_METHODS") ?? (SK.startsWith("sk_live_") ? "qrph" : "gcash,paymaya,card")).split(","))
+    .map((s) => s.trim()).filter(Boolean);
 
   const pm = await fetch("https://api.paymongo.com/v1/checkout_sessions", {
     method: "POST",

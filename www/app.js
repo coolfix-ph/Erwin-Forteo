@@ -897,7 +897,7 @@ function techDash() {
 // Prepaid credits: dito ibinabawas ang commission at booking fee ng bawat cash na job. Hindi ito ma-withdraw.
 const WK = { topup: 'Top-up', commission: 'Commission', booking_fee: 'Booking fee', bonus: 'Bonus mula sa CoolFix', adjust: 'Adjustment' };
 const TST = { sinusuri: ['Sinusuri', 'wt'], aprubado: ['Pumasok na', 'ok'], tinanggihan: ['Tinanggihan', 'no'], naghihintay: ['Hindi pa bayad', 'wt'], expired: ['Hindi natuloy', 'no'] };
-const TMTH = { gcash: 'GCash', maya: 'Maya', paymongo: 'Online' };
+const TMTH = { gcash: 'GCash', maya: 'Maya', paymongo: 'Online', qrph: 'QR Ph', card: 'Card' };
 // Naka-on para sa lahat, o para lang sa mga sumusubok (paymongo_testers)
 const pmOn = () => PMON || (USER && PMT.includes(USER.id));
 const tmine = x => x.method != 'paymongo' || x.status != 'expired';
@@ -913,7 +913,7 @@ function walletView() {
   <div class="wbig${low ? ' low' : ''}"><small>Balance (credits)</small><b>${fmt(b)}</b><span>${low ? `Kulang ang balance mo. Kailangan ng hindi bababa sa ${fmt(WMIN)} para makapag-online at makatanggap ng job.` : WREQ ? `Minimum na balance: ${fmt(WMIN)}` : 'Hindi pa required ang minimum balance.'}</span></div>
   <p class="mute" style="font-size:13px">Sa bawat <b>cash</b> na job na natapos, awtomatikong ibinabawas dito ang ${PCT} commission ng CoolFix at ang ${fmt(FEE)} booking fee na sinisingil mo sa customer. Credits ito para sa app at hindi ma-withdraw.</p>
   <h3 style="margin:16px 0 4px">Mag-top up</h3>
-  ${pmOn() ? `<div class="pmbox"><b>Bayad online</b><p class="mute" style="margin:2px 0 8px;font-size:13px">GCash, Maya o card. Awtomatikong papasok ang credits pagkabayad, hindi na kailangang hintayin ang admin.</p>
+  ${pmOn() ? `<div class="pmbox"><b>Bayad online</b><p class="mute" style="margin:2px 0 8px;font-size:13px">I-scan ang QR Ph gamit ang GCash, Maya o bank app mo. Awtomatikong papasok ang credits pagkabayad, hindi na kailangang hintayin ang admin.</p>
   <div class="chips" role="group" aria-label="Halaga">${[100, 200, 500, 1000, 2000].map(v => `<button type="button" class="chip" data-pa="${v}">${fmt(v)}</button>`).join('')}</div>
   <label>Halaga (₱)<input type="number" id="pa" min="100" max="50000" step="1" inputmode="numeric" placeholder="hal. 500"></label>
   <p class="err" id="pae" role="alert"></p><button class="btn" id="pas">Magbayad online</button></div>
