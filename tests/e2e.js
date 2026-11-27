@@ -20,11 +20,13 @@ const ok = (c, m) => { if (!c) throw new Error("FAIL: " + m); console.log("ok -"
   await p.click("[data-m=signup]"); await p.click("[data-r=technician]");
   await p.fill("#f_n", "Rodel Santos"); await p.fill("#f_p", "917 123 4567"); await p.fill("#f_e", "rodel@test.com"); await p.fill("#f_w", "password123");
   await p.click('[data-v="Aircon cleaning"]'); await p.fill("#f_a", "Quezon City"); await p.click("#go"); await p.waitForTimeout(200);
-  ok((await p.textContent("#er")).includes("NC II"), "technician sign-up requires documents");
+  ok((await p.textContent("#er")).includes("Valid ID"), "technician sign-up requires a valid ID");
+  await p.setInputFiles("#fd_vid", path.join(__dirname, "fixtures/nc2.png")); await p.click("#go"); await p.waitForTimeout(200);
+  ok((await p.textContent("#er")).includes("NC II"), "technician sign-up requires NC II or DTI + BIR");
   await p.click("[data-ct=dti_bir]"); await p.setInputFiles("#fd_dti", path.join(__dirname, "fixtures/permit.pdf")); await p.click("#go"); await p.waitForTimeout(200);
   ok((await p.textContent("#er")).includes("BIR"), "DTI permit alone is not enough");
   await p.click("[data-ct=nc2]"); await p.setInputFiles("#fd_nc2", path.join(__dirname, "fixtures/nc2.png")); await p.click("#go"); await p.waitForTimeout(600);
-  ok(await p.evaluate(() => __DB.profiles[0].doc_status == "sinusuri" && Object.keys(__FILES).length == 1), "NC II uploaded and waiting for review");
+  ok(await p.evaluate(() => __DB.profiles[0].doc_status == "sinusuri" && Object.keys(__FILES).length == 2), "valid ID and NC II uploaded and waiting for review");
   ok(await p.isDisabled("#ol"), "technician cannot go online before approval");
   await p.evaluate(() => { const r = __DB.profiles[0]; r.doc_status = "aprubado" }); await p.click("#lo"); await p.fill("#f_e", "rodel@test.com"); await p.fill("#f_w", "password123"); await p.click("#go"); await p.waitForTimeout(400);
   await p.click("#ol"); await p.waitForTimeout(400); ok((await p.textContent("#ol")).includes("Online ka"), "technician can go online");
@@ -44,12 +46,14 @@ const ok = (c, m) => { if (!c) throw new Error("FAIL: " + m); console.log("ok -"
   for (const t of ["tx", "tt", "sv", "pr", "rg"]) { await p.click(`[data-t=${t}]`); await p.waitForTimeout(150) }
   await p.evaluate(() => { __DB.profiles[0].doc_status = "sinusuri" }); await p.click("#lo"); await p.fill("#f_e", "maria@test.com"); await p.fill("#f_w", "password123"); await p.click("#go"); await p.waitForTimeout(400);
   ok((await p.textContent("#auth")).includes("naghihintay ng pag-apruba"), "admin overview shows pending documents");
-  await p.click("#gotc"); await p.waitForTimeout(150); await p.click("[data-rv]"); await p.waitForTimeout(300);
-  ok(await p.locator(".dv img").count() == 1, "admin can view the uploaded NC II");
+  await p.click("#gotc"); await p.waitForTimeout(400);
+  ok(await p.locator(".card.rq .dv img").count() == 2, "Requirements tab shows the valid ID and NC II");
+  await p.click("[data-rv]"); await p.waitForTimeout(300);
+  ok(await p.locator(".dv img").count() == 2, "admin can open the technician's requirements");
   await p.click("#dno"); ok((await p.textContent("#dre")).includes("bakit"), "rejecting needs a reason");
   await p.fill("#dn", "Malabo ang litrato"); await p.click("#dno"); await p.waitForTimeout(200);
   ok(await p.evaluate(() => __DB.profiles[0].doc_status) == "tinanggihan", "admin can reject documents");
-  await p.click("[data-rv]"); await p.waitForTimeout(200); await p.click("#dok"); await p.waitForTimeout(200);
+  await p.click("[data-rf=tinanggihan]"); await p.click("[data-rv]"); await p.waitForTimeout(200); await p.click("#dok"); await p.waitForTimeout(200);
   ok(await p.evaluate(() => __DB.profiles[0].doc_status) == "aprubado", "admin can approve documents");
   await p.click("[data-t=sv]"); await p.click("#ss"); await p.waitForTimeout(200); ok((await p.textContent("#se")).includes("Na-save"), "admin saves services");
   ok(errs.length == 0, "no page errors " + errs.join("; "));

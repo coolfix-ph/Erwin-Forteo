@@ -46,21 +46,27 @@ const CERT = `<span class="cert" title="May aprubadong NC II certificate"><svg v
 const total = b => (b.amt || 0) + (b.booking_fee || 0);
 
 // ---------- Technician documents (NC II, o DTI Permit + BIR COR) ----------
-const DOCS = { nc2: 'NC II Certificate', dti: 'DTI Business Permit', bir: 'BIR COR (Form 2303)' };
-const docKeys = ct => ct == 'nc2' ? ['nc2'] : ct == 'dti_bir' ? ['dti', 'bir'] : [];
+const DOCS = { vid: 'Valid ID', nc2: 'NC II Certificate', dti: 'DTI Business Permit', bir: 'BIR COR (Form 2303)' };
+const docKeys = ct => ['vid', ...(ct == 'nc2' ? ['nc2'] : ct == 'dti_bir' ? ['dti', 'bir'] : [])];
+const HINT = { vid: 'Government ID na may litrato: PhilSys/National ID, UMID, Driver’s License, Passport, PRC ID, Postal ID o Voter’s ID.' };
+// Naka-upload na ba ang dokumentong ito (para hindi na kailangang ulitin)?
+const have = k => USER && USER.role == 'technician' && USER.docs && USER.docs[k] && (k == 'vid' || USER.cert_type == CT);
 const ctName = ct => ct == 'nc2' ? 'NC II Certificate' : ct == 'dti_bir' ? 'DTI Permit + BIR COR' : '—';
 const DST = { kulang: ['Kulang pa', 'no'], sinusuri: ['Sinusuri', 'wt'], aprubado: ['Aprubado', 'ok'], tinanggihan: ['Tinanggihan', 'no'] };
 const dpill = s => { const d = DST[s] || DST.kulang; return `<span class='pill ${d[1]}'>${d[0]}</span>` };
 function mountDocs(el) {
-  el.innerHTML = `<p class="mute" style="margin:12px 0 6px">May NC II certificate ka ba? <b>(kailangan)</b></p><div class="chips"><button class="chip" type="button" data-ct="nc2" aria-pressed="${CT == 'nc2'}">May NC II ako</button><button class="chip" type="button" data-ct="dti_bir" aria-pressed="${CT == 'dti_bir'}">Wala (DTI Permit + BIR COR)</button></div>
-  ${docKeys(CT).map(k => `<label class="fl">${DOCS[k]}<input type="file" id="fd_${k}" data-fk="${k}" accept="image/jpeg,image/png,application/pdf"><small class="${FILES[k] ? 'okt' : 'mute'}">${FILES[k] ? '✓ ' + esc(FILES[k].name) : 'Litrato (JPG/PNG) o PDF, hanggang 5 MB'}</small></label>`).join('')}`;
+  const fl = k => `<label class="fl">${DOCS[k]} <b>(kailangan)</b>${HINT[k] ? `<small class="mute">${HINT[k]}</small>` : ''}<input type="file" id="fd_${k}" data-fk="${k}" accept="image/jpeg,image/png,application/pdf"><small class="${FILES[k] || have(k) ? 'okt' : 'mute'}">${FILES[k] ? '✓ ' + esc(FILES[k].name) : have(k) ? '✓ Naka-upload na. Pumili lang ng bago kung papalitan.' : 'Litrato (JPG/PNG) o PDF, hanggang 5 MB'}</small></label>`;
+  el.innerHTML = `<p class="mute" style="margin:14px 0 0">Mga requirement ng technician</p>${fl('vid')}<p class="mute" style="margin:12px 0 6px">May NC II certificate ka ba? <b>(kailangan)</b></p><div class="chips"><button class="chip" type="button" data-ct="nc2" aria-pressed="${CT == 'nc2'}">May NC II ako</button><button class="chip" type="button" data-ct="dti_bir" aria-pressed="${CT == 'dti_bir'}">Wala (DTI Permit + BIR COR)</button></div>
+  ${docKeys(CT).slice(1).map(fl).join('')}`;
   el.querySelectorAll('[data-ct]').forEach(b => b.onclick = () => { CT = b.dataset.ct; mountDocs(el) });
   el.querySelectorAll('[data-fk]').forEach(i => i.onchange = () => { const f = i.files[0], s = i.nextElementSibling; if (f) FILES[i.dataset.fk] = f; s.className = f ? 'okt' : 'mute'; s.textContent = f ? '✓ ' + f.name : 'Litrato (JPG/PNG) o PDF, hanggang 5 MB' });
 }
 function docErr() {
+  if (!FILES.vid && !have('vid')) return "I-upload ang Valid ID mo.";
   if (!CT) return "Piliin kung may NC II ka, o DTI Permit at BIR COR.";
   for (const k of docKeys(CT)) {
     const f = FILES[k];
+    if (!f && have(k)) continue;
     if (!f) return `I-upload ang ${DOCS[k]}.`;
     if (!/^(image\/(jpeg|png)|application\/pdf)$/.test(f.type)) return `JPG, PNG o PDF lang ang pwede para sa ${DOCS[k]}.`;
     if (f.size > 5 * 1024 * 1024) return `Masyadong malaki ang ${DOCS[k]}. Hanggang 5 MB lang.`;
@@ -68,9 +74,11 @@ function docErr() {
   return "";
 }
 async function uploadDocs(ct, files) {
-  const docs = {};
+  const docs = {}, old = USER.docs || {};
   for (const k of docKeys(ct)) {
-    const f = files[k], ext = ((f.name || '').split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin', path = `${USER.id}/${k}-${Date.now()}.${ext}`;
+    const f = files[k];
+    if (!f) { if (old[k] && (k == 'vid' || USER.cert_type == ct)) docs[k] = old[k]; continue }
+    const ext = ((f.name || '').split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin', path = `${USER.id}/${k}-${Date.now()}.${ext}`;
     const { error } = await sb.storage.from('tech-docs').upload(path, f, { upsert: true, contentType: f.type });
     if (error) return 'Hindi na-upload ang ' + DOCS[k] + ': ' + error.message;
     docs[k] = { path, name: f.name || k, type: f.type, at: new Date().toISOString() };
@@ -151,7 +159,7 @@ function subscribe() {
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, p => {
       const r = p.new; if (!r) return;
-      if (USER.role == "admin") { const k = PROFILES.findIndex(x => x.id == r.id); if (k >= 0) PROFILES[k] = r; else PROFILES.push(r); if (VIEW == "admin" && ["ov", "tt"].includes(TAB)) adminView() }
+      if (USER.role == "admin") { const k = PROFILES.findIndex(x => x.id == r.id); if (k >= 0) PROFILES[k] = r; else PROFILES.push(r); if ((VIEW == "admin" && ["ov", "tt"].includes(TAB)) || VIEW == "rq") adminView() }
       if (r.id == USER.id) { const was = USER.doc_status; USER = { ...USER, ...r }; if (VIEW == "dash" && was != r.doc_status) techDash(); return }
       if (r.role != "technician") return;
       const i = TECHS.findIndex(t => t.id == r.id);
@@ -222,7 +230,7 @@ async function doSignup() {
   const { data, error } = await sb.auth.signUp({ email: e, password: w, options: { emailRedirectTo: redirect(), data: { role, name: n, phone: p, addr: a, terms_v: localStorage.getItem("cf_terms") || TERMS_V, services: [...sset], cert_type: role == "technician" ? CT : null } } });
   busy("go", false);
   if (error) { $("er").textContent = err = authErr(error); return }
-  if (role == "technician") { const fs = {}; docKeys(CT).forEach(k => fs[k] = FILES[k]); await stashDocs(e, { ct: CT, files: fs }) }
+  if (role == "technician") { const fs = {}; docKeys(CT).forEach(k => { if (FILES[k]) fs[k] = FILES[k] }); await stashDocs(e, { ct: CT, files: fs }) }
   sset = new Set(); CT = null; FILES = {};
   if (data.session) return start(data.session);
   mode = "login"; err = "";
@@ -311,12 +319,12 @@ const unreadOf = c => c.m.filter(m => m.f != rk() && m.ts > myRead(c)).length;
 const unreadN = () => USER && USER.role != 'admin' ? CONVS.reduce((n, c) => n + unreadOf(c), 0) : 0;
 function tabList() {
   const c = USER.role == 'customer', ad = USER.role == 'admin';
-  return ad ? [['ov', 'Overview'], ['tx', 'Transaction'], ['tt', 'Technician'], ['sv', 'Serbisyo'], ['pr', 'Base price'], ['rg', 'Rate guide']] : c ? [['find', 'Hanapin'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']] : [['dash', 'Dashboard'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']];
+  return ad ? [['ov', 'Overview'], ['rq', 'Requirements'], ['tx', 'Transaction'], ['tt', 'Technician'], ['sv', 'Serbisyo'], ['pr', 'Base price'], ['rg', 'Rate guide']] : c ? [['find', 'Hanapin'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']] : [['dash', 'Dashboard'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']];
 }
-const ICON = { ov: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>', tx: '<path d="M4 6h16M4 12h16M4 18h10"/>', tt: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11l2 2 4-4"/>', sv: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>', pr: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01"/>', rg: '<path d="M4 4h12l4 4v12H4zM8 12h8M8 16h5"/>' };
+const ICON = { ov: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>', rq: '<path d="M14 3H6v18h12V7zM14 3v4h4M9 13l2 2 4-4"/>', tx: '<path d="M4 6h16M4 12h16M4 18h10"/>', tt: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11l2 2 4-4"/>', sv: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>', pr: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01"/>', rg: '<path d="M4 4h12l4 4v12H4zM8 12h8M8 16h5"/>' };
 function tabsBar() {
   const nb = $('tabs'); nb.hidden = false;
-  nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${ICON[k] ? `<svg class="ti" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>` : ''}<span>${l}</span>${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}</button>`).join('');
+  nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${ICON[k] ? `<svg class="ti" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>` : ''}<span>${l}</span>${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}${k == 'rq' && PROFILES.some(u => u.role == 'technician' && u.doc_status == 'sinusuri') ? ' <i class="dot"></i>' : ''}</button>`).join('');
   nb.querySelectorAll('button').forEach(b => b.onclick = () => { TAB = b.dataset.t; CUR = null; if (TAB == 'find') TRACK = null; show() });
 }
 function show() {
@@ -436,10 +444,10 @@ function techDash() {
   const card = b => `<div class="jb"><b>${esc(b.svc)}</b><p class="mute" style="margin:4px 0">${esc(b.cust_name)}${b.cust_phone ? ' · <a href="tel:' + esc(b.cust_phone) + '">' + esc(b.cust_phone) + '</a>' : ''}<br>${esc(b.address)}<br>${esc(b.sched || '')} · ${fmt(b.amt)} · <span class="pill">${esc(b.st)}</span></p>
   ${b.st == 'Bago' ? `<button class="btn" data-s="Papunta na" data-b="${b.id}">Tanggapin at pumunta</button><button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Papunta na' ? `<button class="btn" data-s="Dumating na" data-b="${b.id}">Dumating na ako</button>` : `<button class="btn" data-s="Natapos" data-b="${b.id}">Tapos na ang trabaho</button>`}
   <button class="btn alt" data-c="${b.id}">Mag-message sa customer</button></div>`;
-  const ds = u.doc_status || "kulang", lock = !u.online && (REQ ? ds != "aprubado" : !["sinusuri", "aprubado"].includes(ds)), form = ds != "sinusuri" || RE;
-  const docBox = ds == "aprubado" && !RE ? `<p class="mute" style="margin:6px 0 0">Dokumento: ${ctName(u.cert_type)} ${dpill(ds)} <button class="chip" id="reup" style="padding:2px 9px;font-size:12px">Palitan</button></p>${u.cert_type == 'nc2' ? `<p class="note">${CERT} Makikita ng mga customer ang badge mo, at pwede kang tumanggap ng installation at major repair.</p>` : `<p class="note">Mag-upload ng <b>NC II</b> para magkaroon ng NC II Certified badge at makatanggap ng installation at major repair (hal. compressor, refrigerant).</p>`}`
-    : `<div class="jb doc ${ds}"><b>${ds == "aprubado" ? "Palitan ang dokumento" : ds == "sinusuri" ? "Sinusuri na ng admin ang dokumento mo" : ds == "tinanggihan" ? "Hindi naaprubahan ang dokumento mo" : "Kailangan ng dokumento bago makatanggap ng booking"}</b>
-    <p class="mute" style="margin:4px 0">${ds == "sinusuri" && !RE ? `${ctName(u.cert_type)} · ${REQ ? "Makakapag-online ka kapag naaprubahan na ng admin." : "Pwede ka nang mag-online habang sinusuri."}` : ds == "tinanggihan" ? `Dahilan: ${esc(u.doc_note || "—")}. Mag-upload ulit ng malinaw na kopya.` : ds == "aprubado" ? "Kapag nagpalit ka, susuriin ulit ito ng admin at hindi ka muna makakapag-online." : "I-upload ang NC II certificate mo. Kung wala, ang DTI Business Permit at BIR COR (Form 2303)."}</p>
+  const ds = u.doc_status || "kulang", lock = !u.online && (REQ ? ds != "aprubado" : !["sinusuri", "aprubado"].includes(ds)), noId = !(u.docs && u.docs.vid), form = ds != "sinusuri" || RE || noId;
+  const docBox = ds == "aprubado" && !RE && !noId ? `<p class="mute" style="margin:6px 0 0">Dokumento: ${ctName(u.cert_type)} ${dpill(ds)} <button class="chip" id="reup" style="padding:2px 9px;font-size:12px">Palitan</button></p>${u.cert_type == 'nc2' ? `<p class="note">${CERT} Makikita ng mga customer ang badge mo, at pwede kang tumanggap ng installation at major repair.</p>` : `<p class="note">Mag-upload ng <b>NC II</b> para magkaroon ng NC II Certified badge at makatanggap ng installation at major repair (hal. compressor, refrigerant).</p>`}`
+    : `<div class="jb doc ${ds}"><b>${noId && ds != "kulang" ? "Kailangan na rin ng Valid ID" : ds == "aprubado" ? "Palitan ang dokumento" : ds == "sinusuri" ? "Sinusuri na ng admin ang dokumento mo" : ds == "tinanggihan" ? "Hindi naaprubahan ang dokumento mo" : "Kailangan ng dokumento bago makatanggap ng booking"}</b>
+    <p class="mute" style="margin:4px 0">${noId && ds != "kulang" ? `Bagong requirement ang valid ID para sa lahat ng technician. I-upload ito sa ibaba.${ds == "aprubado" ? " Susuriin ulit ito ng admin, kaya hindi ka muna makakapag-online hangga't hindi naaaprubahan." : ""}` : ds == "sinusuri" && !RE ? `${ctName(u.cert_type)} · ${REQ ? "Makakapag-online ka kapag naaprubahan na ng admin." : "Pwede ka nang mag-online habang sinusuri."}` : ds == "tinanggihan" ? `Dahilan: ${esc(u.doc_note || "—")}. Mag-upload ulit ng malinaw na kopya.` : ds == "aprubado" ? "Kapag nagpalit ka, susuriin ulit ito ng admin at hindi ka muna makakapag-online." : "I-upload ang valid ID at NC II certificate mo. Kung walang NC II, ang DTI Business Permit at BIR COR (Form 2303)."}</p>
     ${form ? `<div id="dz"></div><p class="err" id="dze" role="alert"></p><button class="btn" id="dsub">I-submit ang dokumento</button>${RE ? `<button class="btn alt" id="dcx">Huwag na</button>` : ""}` : `<button class="chip" id="reup">Palitan ang dokumento</button>`}</div>`;
   A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p>${docBox}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (85%)</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><button class="btn ${u.online ? "" : "alt"}" id="ol" ${lock ? "disabled" : ""}>${u.online ? "Online ka (i-tap para mag-offline)" : lock ? (ds == "sinusuri" ? "Hinihintay ang pag-apruba ng dokumento" : "I-upload muna ang dokumento para mag-online") : "Offline ka (i-tap para mag-online)"}</button><p class="err" id="de" role="alert"></p><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div></div>`;
   if ($("dz")) { if (!CT) CT = u.cert_type || null; mountDocs($("dz")) }
@@ -448,7 +456,7 @@ function techDash() {
   if ($("dsub")) $("dsub").onclick = async () => {
     const e = docErr(); if (e) { $("dze").textContent = e; return }
     busy("dsub", true); $("dsub").textContent = "Ina-upload…";
-    const fs = {}; docKeys(CT).forEach(k => fs[k] = FILES[k]);
+    const fs = {}; docKeys(CT).forEach(k => { if (FILES[k]) fs[k] = FILES[k] });
     const r = await uploadDocs(CT, fs);
     if (r) { busy("dsub", false); $("dsub").textContent = "I-submit ang dokumento"; $("dze").textContent = r; return }
     RE = false; FILES = {}; techDash();
@@ -565,7 +573,7 @@ function rateMarket() {
 }
 
 // ---------- Admin ----------
-function adminView() { VIEW = "admin"; TAB == 'ov' ? admOv() : TAB == 'tx' ? admTx() : TAB == 'sv' ? admSv() : TAB == 'pr' ? admPr() : admTc() }
+function adminView() { VIEW = "admin"; TAB == 'ov' ? admOv() : TAB == 'rq' ? admRq() : TAB == 'tx' ? admTx() : TAB == 'sv' ? admSv() : TAB == 'pr' ? admPr() : admTc() }
 let AP = 7;
 function admOv() {
   const DAY = 864e5, t0 = new Date(); t0.setHours(0, 0, 0, 0);
@@ -612,7 +620,7 @@ function admOv() {
   </div></div>`;
   A.querySelectorAll('[data-ap]').forEach(b => b.onclick = () => { AP = +b.dataset.ap; admOv() });
   $('allTx').onclick = () => { TAB = 'tx'; show() };
-  if ($('gotc')) $('gotc').onclick = () => { TAB = 'tt'; show() };
+  if ($('gotc')) $('gotc').onclick = () => { TAB = 'rq'; RQF = 'sinusuri'; show() };
   const tip = $('tip');
   if (tip) A.querySelectorAll('.col').forEach(c => {
     const on = () => { const x = days[c.dataset.i]; tip.innerHTML = `<b>${x.d.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' })}</b><br>${fmt(x.v)} · ${x.n} booking`; tip.hidden = false; const r = c.getBoundingClientRect(), p = $('ch').getBoundingClientRect(); tip.style.left = Math.min(p.width - 140, Math.max(0, r.left - p.left + r.width / 2 - 70)) + 'px'; c.classList.add('on') };
@@ -641,15 +649,39 @@ function admTc() {
   A.innerHTML = `<div class='panel au wide'><h2>Mga technician</h2>${pend ? `<p class='note'><b>${pend}</b> technician ang naghihintay ng pag-apruba ng dokumento. Pindutin ang <b>Suriin</b>.</p>` : ''}<div class='tw'><table><thead><tr><th>Pangalan</th><th>Dokumento</th><th>Cellphone</th><th>Natapos</th><th>Kinansela</th><th>Kabuuang bayad</th><th>Kita ng technician (85%)</th><th>Fee ng CoolFix</th><th>Status</th></tr></thead><tbody>${L.map(o => `<tr><td>${esc(o.n)}</td><td>${o.u ? `${dpill(o.u.doc_status)}<br><small class='mute'>${ctName(o.u.cert_type)}</small><br><button class='chip' data-rv='${esc(o.u.id)}' style='margin-top:4px'>Suriin</button>` : '—'}</td><td>${esc(o.u?.phone || '')}</td><td>${o.j}</td><td>${o.c}</td><td>${fmt(o.g)}</td><td>${fmt(o.g - fee(o.g))}</td><td>${fmt(fee(o.g))}</td><td><span class='pill ${o.u && o.u.online ? 'ok' : ''}'>${o.u ? (o.u.online ? 'Online' : 'Offline') : '—'}</span></td></tr>`).join('') || `<tr><td colspan='9' class='mute'>Wala pang technician.</td></tr>`}</tbody></table></div></div>`;
   A.querySelectorAll('[data-rv]').forEach(b => b.onclick = () => admDoc(b.dataset.rv));
 }
+// Mga requirement: litrato o PDF ng bawat dokumento, gamit ang pansamantalang link (10 minuto).
+const docTile = (u, k) => { const d = u.docs && u.docs[k]; return `<div class='dc ${d ? '' : 'miss'}'><b>${DOCS[k]}</b><small class='mute'>${d ? esc(d.name || '') + ' · ' + dstr(d.at || Date.now()) : 'Wala pang na-upload'}</small>${d ? `<div class='dv' data-du='${esc(u.id)}' data-dk='${k}'><span class='mute'>Naglo-load…</span></div>` : ''}</div>` };
+async function fillTiles(view) {
+  for (const el of [...A.querySelectorAll('[data-du]')]) {
+    const u = PROFILES.find(p => p.id == el.dataset.du), d = u && u.docs && u.docs[el.dataset.dk]; if (!d) continue;
+    const { data } = await sb.storage.from('tech-docs').createSignedUrl(d.path, 600);
+    if (VIEW != view || !el.isConnected) return;
+    const url = data && data.signedUrl, k = el.dataset.dk;
+    el.innerHTML = url ? `${/^image\//.test(d.type) ? `<a href='${esc(url)}' target='_blank' rel='noopener'><img src='${esc(url)}' alt='${DOCS[k]} ni ${esc(u.name)}'></a>` : `<a class='pdf' href='${esc(url)}' target='_blank' rel='noopener'>PDF</a>`}<a class='chip' href='${esc(url)}' target='_blank' rel='noopener'>Buksan ang buong file</a>` : `<span class='err'>Hindi mabuksan ang file.</span>`;
+  }
+}
+let RQF = 'sinusuri';
+function admRq() {
+  VIEW = 'rq';
+  const T = PROFILES.filter(u => u.role == 'technician'), st = u => u.doc_status || 'kulang', cnt = s => T.filter(u => st(u) == s).length;
+  const F = [['sinusuri', 'Naghihintay'], ['tinanggihan', 'Tinanggihan'], ['kulang', 'Kulang pa'], ['aprubado', 'Aprubado'], ['Lahat', 'Lahat']];
+  const L = T.filter(u => RQF == 'Lahat' || st(u) == RQF).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  A.innerHTML = `<div class='dash'><div class='dh'><div><h2>Requirements ng technician</h2><p class='mute'>Valid ID, at NC II o DTI Permit + BIR COR. Suriin bago payagang tumanggap ng booking.</p></div></div>
+  <div class='chips' role='group' aria-label='Status'>${F.map(([k, l]) => `<button class='chip' aria-pressed='${RQF == k}' data-rf='${k}'>${l} <b>${k == 'Lahat' ? T.length : cnt(k)}</b></button>`).join('')}</div>
+  ${L.length ? L.map(u => `<section class='card rq'><div class='ch'><div><h3>${esc(u.name)} ${dpill(st(u))}</h3><span class='mute'>${esc(u.email || '')} · ${esc(u.phone || '')} · ${ctName(u.cert_type)}</span></div><button class='chip' data-rv='${esc(u.id)}'>Suriin at aprubahan</button></div>${u.doc_note && st(u) == 'tinanggihan' ? `<p class='mute' style='margin:0 0 8px'>Dahilan: ${esc(u.doc_note)}</p>` : ''}<div class='docs'>${docKeys(u.cert_type).map(k => docTile(u, k)).join('')}</div></section>`).join('') : `<section class='card'><p class='mute'>${RQF == 'sinusuri' ? 'Walang naghihintay na requirement ngayon.' : 'Walang technician dito.'}</p></section>`}</div>`;
+  A.querySelectorAll('[data-rf]').forEach(b => b.onclick = () => { RQF = b.dataset.rf; admRq() });
+  A.querySelectorAll('[data-rv]').forEach(b => b.onclick = () => admDoc(b.dataset.rv));
+  fillTiles('rq');
+}
 async function admDoc(id) {
   VIEW = 'doc'; const u = PROFILES.find(p => p.id == id); if (!u) return adminView();
-  const ks = docKeys(u.cert_type).filter(k => u.docs && u.docs[k]);
-  A.innerHTML = `<div class='panel au wide'><button class='chip' id='bk'>← Bumalik sa listahan</button><h2 style='margin-top:12px'>${esc(u.name)}</h2><p class='mute' style='margin:0'>${esc(u.email || '')} · ${esc(u.phone || '')}<br>${esc((u.services || []).join(', '))} · ${esc(u.addr || '—')}</p>
+  const ks = docKeys(u.cert_type).filter(k => u.docs && u.docs[k]), miss = docKeys(u.cert_type).filter(k => !(u.docs && u.docs[k])).map(k => DOCS[k]);
+  A.innerHTML = `<div class='panel au wide'><button class='chip' id='bk'>← Bumalik</button><h2 style='margin-top:12px'>${esc(u.name)}</h2><p class='mute' style='margin:0'>${esc(u.email || '')} · ${esc(u.phone || '')}<br>${esc((u.services || []).join(', '))} · ${esc(u.addr || '—')}</p>
   <p>Uri ng dokumento: <b>${ctName(u.cert_type)}</b> ${dpill(u.doc_status)}</p>
-  <div class='docs'>${ks.length ? ks.map(k => `<div class='dc'><b>${DOCS[k]}</b><small class='mute'>${esc(u.docs[k].name || '')} · ${dstr(u.docs[k].at || Date.now())}</small><div class='dv' data-dk='${k}'><span class='mute'>Naglo-load…</span></div></div>`).join('') : `<p class='mute'>Wala pang na-upload na dokumento ang technician na ito.</p>`}</div>
+  ${miss.length ? `<p class='note'>Kulang pa: <b>${miss.join(', ')}</b>${u.cert_type ? '' : ' (hindi pa pumipili ng NC II o DTI + BIR COR)'}</p>` : ''}<div class='docs'>${docKeys(u.cert_type).map(k => docTile(u, k)).join('')}</div>
   ${u.doc_note ? `<p class='mute'>Huling dahilan ng pagtanggi: ${esc(u.doc_note)}</p>` : ''}
   <label>Dahilan kung tatanggihan (makikita ito ng technician)<input id='dn' placeholder='hal. Malabo ang litrato ng NC II'></label><p class='err' id='dre' role='alert'></p>
-  <div class='row2'><button class='btn' id='dok' ${ks.length ? '' : 'disabled'}>Aprubahan</button><button class='btn alt' id='dno'>Tanggihan</button></div></div>`;
+  <div class='row2'><button class='btn' id='dok' ${miss.length ? 'disabled title="Kulang pa ang requirements"' : ''}>Aprubahan</button><button class='btn alt' id='dno'>Tanggihan</button></div></div>`;
   $('bk').onclick = () => adminView();
   const set = async st => {
     const n = $('dn').value.trim(); if (st == 'tinanggihan' && !n) { $('dre').textContent = 'Ilagay kung bakit tinanggihan, para alam ng technician ang aayusin.'; return }
@@ -659,12 +691,7 @@ async function admDoc(id) {
     const i = PROFILES.findIndex(p => p.id == id); if (i >= 0) PROFILES[i] = data; adminView();
   };
   $('dok').onclick = () => set('aprubado'); $('dno').onclick = () => set('tinanggihan');
-  for (const k of ks) {
-    const d = u.docs[k], { data } = await sb.storage.from('tech-docs').createSignedUrl(d.path, 600), el = A.querySelector(`[data-dk='${k}']`);
-    if (!el || VIEW != 'doc') return;
-    const url = data && data.signedUrl;
-    el.innerHTML = url ? `${/^image\//.test(d.type) ? `<a href='${esc(url)}' target='_blank' rel='noopener'><img src='${esc(url)}' alt='${DOCS[k]}'></a>` : `<div class='pdf'>PDF</div>`}<a class='chip' href='${esc(url)}' target='_blank' rel='noopener'>Buksan ang buong file</a>` : `<span class='err'>Hindi mabuksan ang file.</span>`;
-  }
+  fillTiles('doc');
 }
 function admSv() {
   if (!ED) ED = { c: cl(CAT), o: cl(OC), n: [...NC2] };
