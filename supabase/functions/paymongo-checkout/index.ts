@@ -1,6 +1,7 @@
 // CoolFix: gumawa ng PayMongo checkout para sa top-up ng Tech Wallet.
 // Tinatawag ng app (naka-login na technician). Ibinabalik ang checkout_url na bubuksan ng app.
 // Kailangang secret sa Supabase > Edge Functions > Secrets: PAYMONGO_SECRET_KEY (sk_test_... muna, saka sk_live_...).
+// Naka-off ang JWT check ng Supabase (--no-verify-jwt); ang function mismo ang nagche-check ng login sa ibaba.
 // Opsyonal: PAYMONGO_METHODS (hal. "gcash,paymaya,card"), APP_URL (hal. "https://coollfix.com/").
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
