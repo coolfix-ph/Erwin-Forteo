@@ -19,19 +19,21 @@ function defaults(t,o){o={...o};if(t=='bookings'){o.id=seq++;o.code='CF-'+(1000+
 Q.prototype.run=function(){const T=DB[this.t];let rows;
  if(this.op=='select'){rows=T.filter(r=>this.f.every(f=>f(r)))}
  else if(this.op=='insert'){const r=defaults(this.t,this.o);T.push(r);rows=[r];emit(this.t,'INSERT',r)}
- else if(this.op=='update'){rows=T.filter(r=>this.f.every(f=>f(r)));rows.forEach(r=>{Object.assign(r,this.o);if(this.t=='bookings')r.updated_at=now();emit(this.t,'UPDATE',r)})}
+ else if(this.op=='update'){rows=T.filter(r=>this.f.every(f=>f(r)));if(this.t=='profiles'&&this.o.online&&rows.some(r=>r.role=='technician'&&(this.o.doc_status||r.doc_status)!='aprubado'))return {data:null,error:{message:'Hindi pa aprubado ang mga dokumento mo'}};rows.forEach(r=>{Object.assign(r,this.o);if(this.t=='bookings')r.updated_at=now();emit(this.t,'UPDATE',r)})}
  else if(this.op=='upsert'){const keys=(this.opt?.onConflict||(this.t=='settings'?'key':'id')).split(',');let r=T.find(x=>keys.every(k=>x[k]==this.o[k]));if(r)Object.assign(r,this.o);else{r=defaults(this.t,this.o);T.push(r)}rows=[r]}
  rows=JSON.parse(JSON.stringify(rows));
  if(this.one)return rows[0]?{data:rows[0],error:null}:{data:null,error:{message:'not found'}};return {data:rows,error:null}};
 const sess=()=>uid?{user:{id:uid}}:null;
 const auth={
- async signUp({email,password,options}){if(users.find(u=>u.email==email))return{data:{},error:{message:'User already registered'}};const id='u'+seq++;users.push({id,email,password});const m=options.data;DB.profiles.push({id,role:m.role=='technician'?'technician':'customer',name:m.name,email,phone:m.phone,addr:m.addr,services:m.services,online:false,lat:null,lng:null,google:false,created_at:now()});uid=id;return{data:{session:sess()},error:null}},
+ async signUp({email,password,options}){if(users.find(u=>u.email==email))return{data:{},error:{message:'User already registered'}};const id='u'+seq++;users.push({id,email,password});const m=options.data;DB.profiles.push({id,role:m.role=='technician'?'technician':'customer',name:m.name,email,phone:m.phone,addr:m.addr,services:m.services,cert_type:m.cert_type||null,docs:{},doc_status:'kulang',doc_note:'',online:false,lat:null,lng:null,google:false,created_at:now()});uid=id;return{data:{session:sess()},error:null}},
  async signInWithPassword({email,password}){const u=users.find(u=>u.email==email&&u.password==password);if(!u)return{data:{},error:{message:'Invalid login credentials'}};uid=u.id;return{data:{session:sess()},error:null}},
  async signOut(){uid=null;return{error:null}},
  async getSession(){return{data:{session:sess()}}},
  onAuthStateChange(cb){listeners.push(cb);return{data:{subscription:{unsubscribe(){}}}}},
  async resetPasswordForEmail(){return{error:null}},async updateUser(){return{error:null}},async signInWithOAuth(){return{error:{message:'no google'}}}};
+const FILES={};window.__FILES=FILES;
+const storage={from:b=>({async upload(path,f){FILES[b+'/'+path]=f;return{data:{path},error:null}},async createSignedUrl(path){const f=FILES[b+'/'+path];return f?{data:{signedUrl:URL.createObjectURL(f)},error:null}:{data:null,error:{message:'not found'}}}})};
 window.__DB=DB;window.__users=users;
-window.supabase={createClient(){return{auth,from:t=>new Q(t),
+window.supabase={createClient(){return{auth,storage,from:t=>new Q(t),
  channel(){const ch={on(type,opt,cb){subs.push({table:opt.table,event:opt.event,cb});return ch},subscribe(){return ch}};return ch},removeChannel(){subs.length=0}}}};
 })();
