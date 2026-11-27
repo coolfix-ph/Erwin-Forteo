@@ -438,6 +438,67 @@ async function setStatus(id, st) {
 
 // ---------- Technician ----------
 const myJobs = () => TX.filter(x => x.tech_id == USER.id);
+
+// ---------- Kita at commission voucher ----------
+const doneAt = x => new Date(x.updated_at || x.created_at).getTime();
+const mkey = t => { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') };
+const mname = k => new Date(k + '-01T00:00:00').toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
+function byMonth(J) {
+  const m = {};
+  J.filter(x => x.st == 'Natapos').forEach(x => { const k = mkey(doneAt(x)), o = m[k] = m[k] || { k, jobs: [], g: 0 }; o.jobs.push(x); o.g += x.amt });
+  return Object.values(m).map(o => ({ ...o, c: o.jobs.reduce((n, x) => n + fee(x.amt), 0), n: o.g - o.jobs.reduce((n, x) => n + fee(x.amt), 0) })).sort((a, b) => b.k.localeCompare(a.k));
+}
+function earnBox(J) {
+  const D = J.filter(x => x.st == 'Natapos'), net = a => a.reduce((n, x) => n + x.amt - fee(x.amt), 0), now = Date.now(), t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  const ms = byMonth(J), cur = ms.find(o => o.k == mkey(now));
+  return `<section class="earn"><h3>Buod ng kita mo</h3><p class="mute" style="margin:0 0 8px;font-size:13px">Netong kita (${TPCT}), pagkatapos ng ${PCT} commission ng CoolFix. Natapos na booking lang.</p>
+  <div class="stats s4"><div><b>${fmt(net(D.filter(x => doneAt(x) >= t0.getTime())))}</b><small>Ngayong araw</small></div><div><b>${fmt(net(D.filter(x => doneAt(x) >= now - 7 * 864e5)))}</b><small>Nakaraang 7 araw</small></div><div><b>${fmt(cur ? cur.n : 0)}</b><small>Ngayong buwan</small></div><div><b>${fmt(net(D))}</b><small>Kabuuan</small></div></div>
+  <h3 style="margin-top:14px">Kita kada buwan</h3>${ms.length ? ms.map(o => `<div class="mrow"><div><b>${mname(o.k)}</b><small>${o.jobs.length} natapos · ${fmt(o.g)} kabuuang bayad · ${fmt(o.c)} commission</small></div><div class="km">${fmt(o.n)}<small>kita mo</small></div><button class="chip" data-pdf="${o.k}" aria-label="I-download ang commission voucher ng ${mname(o.k)}">PDF</button></div>`).join('') : '<p class="mute">Wala pang natapos na booking. Lalabas dito ang kita mo kada buwan.</p>'}</section>`;
+}
+const loadPDF = () => window.jspdf ? Promise.resolve(true) : new Promise(r => { const s = document.createElement('script'); s.src = 'vendor/jspdf/jspdf.umd.min.js'; s.onload = () => r(!!window.jspdf); s.onerror = () => r(false); document.head.appendChild(s) });
+const imgData = src => fetch(src).then(r => r.blob()).then(b => new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.onerror = () => r(null); f.readAsDataURL(b) })).catch(() => null);
+// Gumagawa ng PDF na commission voucher para sa isang technician at isang buwan.
+async function voucher(t, k, jobs) {
+  if (!await loadPDF()) return 'Hindi ma-load ang PDF maker. Subukan ulit.';
+  const { jsPDF } = window.jspdf, d = new jsPDF({ unit: 'mm', format: 'a4' }), P = n => 'PHP ' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const ink = [12, 35, 112], mute = [90, 107, 154], L = 15, R = 195;
+  const logo = await imgData('img/logo.png'); if (logo) d.addImage(logo, 'PNG', L, 12, 18, 18);
+  d.setTextColor(...ink); d.setFont('helvetica', 'bold'); d.setFontSize(18); d.text('CoolFix', L + 22, 21);
+  d.setFont('helvetica', 'normal'); d.setFontSize(9); d.setTextColor(...mute); d.text("Aircon at ref technician, malapit sa'yo · coollfix.com", L + 22, 27);
+  const no = 'CV-' + k.replace('-', '') + '-' + String(t.id || '').replace(/[^a-z0-9]/gi, '').slice(0, 6).toUpperCase();
+  d.setTextColor(...ink); d.setFont('helvetica', 'bold'); d.setFontSize(14); d.text('COMMISSION VOUCHER', R, 19, { align: 'right' });
+  d.setFont('helvetica', 'normal'); d.setFontSize(9); d.setTextColor(...mute); d.text('Voucher No. ' + no, R, 25, { align: 'right' }); d.text('Petsa: ' + new Date().toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' }), R, 30, { align: 'right' });
+  d.setDrawColor(211, 222, 242); d.setLineWidth(.4); d.line(L, 35, R, 35);
+  const [yy, mm] = k.split('-').map(Number), last = new Date(yy, mm, 0).getDate();
+  const info = [['Technician', t.name || '-'], ['Mobile', t.phone || '-'], ['Email', t.email || '-'], ['Dokumento', t.cert_type == 'nc2' && t.doc_status == 'aprubado' ? 'NC II Certified' : ctName(t.cert_type)], ['Panahon', `${mname(k).split(' ')[0]} 1-${last}, ${yy}`]];
+  let y = 43; d.setFontSize(10);
+  info.forEach(([a, b]) => { d.setTextColor(...mute); d.text(a, L, y); d.setTextColor(...ink); d.text(String(b), L + 28, y); y += 6 });
+  y += 3; const X = [L + 1, L + 20, L + 40, 136, 165, R - 1], H = ['Petsa', 'Booking', 'Serbisyo', 'Bayad', `Commission ${PCT}`, `Kita ${TPCT}`];
+  const head = () => { d.setFillColor(238, 244, 252); d.rect(L, y - 5, R - L, 8, 'F'); d.setFont('helvetica', 'bold'); d.setFontSize(8.5); d.setTextColor(...ink); H.forEach((h, i) => d.text(h, X[i], y, i < 3 ? {} : { align: 'right' })); d.setFont('helvetica', 'normal'); y += 8 };
+  head();
+  const rows = [...jobs].sort((a, b) => doneAt(a) - doneAt(b));
+  rows.forEach(x => {
+    if (y > 262) { d.addPage(); y = 20; head() }
+    d.setFontSize(8.5); d.setTextColor(...ink);
+    const sv = d.splitTextToSize(String(x.svc || ''), 66);
+    d.text(new Date(doneAt(x)).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }), X[0], y); d.text(String(x.code || x.id), X[1], y); d.text(sv.slice(0, 2), X[2], y);
+    d.text(P(x.amt), X[3], y, { align: 'right' }); d.text(P(fee(x.amt)), X[4], y, { align: 'right' }); d.text(P(x.amt - fee(x.amt)), X[5], y, { align: 'right' });
+    y += sv.length > 1 ? 9 : 6; d.setDrawColor(230, 236, 246); d.line(L, y - 4, R, y - 4);
+  });
+  if (!rows.length) { d.setTextColor(...mute); d.text('Walang natapos na booking sa buwang ito.', L + 1, y); y += 6 }
+  const g = rows.reduce((n, x) => n + x.amt, 0), c = rows.reduce((n, x) => n + fee(x.amt), 0);
+  if (y > 230) { d.addPage(); y = 20 }
+  y += 4; d.setFontSize(10);
+  [[`Bilang ng natapos na booking`, String(rows.length)], ['Kabuuang bayad sa serbisyo', P(g)], [`Commission ng CoolFix (${PCT})`, P(c)]].forEach(([a, b]) => { d.setTextColor(...mute); d.text(a, 104, y); d.setTextColor(...ink); d.text(b, R - 2, y, { align: 'right' }); y += 6 });
+  d.setFillColor(12, 35, 112); d.rect(100, y - 4.5, R - 100, 9, 'F'); d.setTextColor(255, 255, 255); d.setFont('helvetica', 'bold'); d.text(`Netong kita ng technician (${TPCT})`, 104, y + 1.5); d.text(P(g - c), R - 2, y + 1.5, { align: 'right' }); d.setFont('helvetica', 'normal');
+  y += 14; d.setFontSize(8.5); d.setTextColor(...mute);
+  d.text(d.splitTextToSize(`Paalala: Fixed na ${PCT} ang commission ng CoolFix sa bayad sa serbisyo. Hindi kasama rito ang booking fee na sinisingil sa customer, dahil buo itong napupunta sa CoolFix at hindi binabawas sa technician.`, R - L), L, y);
+  y += 22; d.setDrawColor(...mute); d.line(L, y, L + 70, y); d.line(R - 70, y, R, y); d.setTextColor(...ink); d.setFontSize(9);
+  d.text('Inihanda ni (CoolFix)', L, y + 5); d.text('Tinanggap ni: ' + (t.name || ''), R - 70, y + 5);
+  const pages = d.getNumberOfPages(); for (let i = 1; i <= pages; i++) { d.setPage(i); d.setFontSize(7.5); d.setTextColor(...mute); d.text(`Ginawa ng CoolFix app · ${new Date().toLocaleString('en-PH')} · Pahina ${i} ng ${pages}`, L, 289) }
+  d.save(`CoolFix-Voucher-${k}-${String(t.name || 'technician').replace(/[^a-z0-9]+/gi, '-')}.pdf`);
+  return '';
+}
 function techDash() {
   VIEW = "dash"; const u = USER, J = myJobs();
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -451,7 +512,7 @@ function techDash() {
     : `<div class="jb doc ${ds}"><b>${noId && ds != "kulang" ? "Kailangan na rin ng Valid ID" : ds == "aprubado" ? "Palitan ang dokumento" : ds == "sinusuri" ? "Sinusuri na ng admin ang dokumento mo" : ds == "tinanggihan" ? "Hindi naaprubahan ang dokumento mo" : "Kailangan ng dokumento bago makatanggap ng booking"}</b>
     <p class="mute" style="margin:4px 0">${noId && ds != "kulang" ? `Bagong requirement ang valid ID para sa lahat ng technician. I-upload ito sa ibaba.${ds == "aprubado" ? " Susuriin ulit ito ng admin, kaya hindi ka muna makakapag-online hangga't hindi naaaprubahan." : ""}` : ds == "sinusuri" && !RE ? `${ctName(u.cert_type)} · ${REQ ? "Makakapag-online ka kapag naaprubahan na ng admin." : "Pwede ka nang mag-online habang sinusuri."}` : ds == "tinanggihan" ? `Dahilan: ${esc(u.doc_note || "—")}. Mag-upload ulit ng malinaw na kopya.` : ds == "aprubado" ? "Kapag nagpalit ka, susuriin ulit ito ng admin at hindi ka muna makakapag-online." : "I-upload ang valid ID at NC II certificate mo. Kung walang NC II, ang DTI Business Permit at BIR COR (Form 2303)."}</p>
     ${form ? `<div id="dz"></div><p class="err" id="dze" role="alert"></p><button class="btn" id="dsub">I-submit ang dokumento</button>${RE ? `<button class="btn alt" id="dcx">Huwag na</button>` : ""}` : `<button class="chip" id="reup">Palitan ang dokumento</button>`}</div>`;
-  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p>${docBox}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><button class="btn ${u.online ? "" : "alt"}" id="ol" ${lock ? "disabled" : ""}>${u.online ? "Online ka (i-tap para mag-offline)" : lock ? (ds == "sinusuri" ? "Hinihintay ang pag-apruba ng dokumento" : "I-upload muna ang dokumento para mag-online") : "Offline ka (i-tap para mag-online)"}</button><p class="err" id="de" role="alert"></p><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div></div>`;
+  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p>${docBox}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><button class="btn ${u.online ? "" : "alt"}" id="ol" ${lock ? "disabled" : ""}>${u.online ? "Online ka (i-tap para mag-offline)" : lock ? (ds == "sinusuri" ? "Hinihintay ang pag-apruba ng dokumento" : "I-upload muna ang dokumento para mag-online") : "Offline ka (i-tap para mag-online)"}</button><p class="err" id="de" role="alert"></p><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<p class="err" id="pe" role="alert"></p></div>`;
   if ($("dz")) { if (!CT) CT = u.cert_type || null; mountDocs($("dz")) }
   if ($("reup")) $("reup").onclick = () => { RE = true; techDash() };
   if ($("dcx")) $("dcx").onclick = () => { RE = false; FILES = {}; techDash() };
@@ -473,6 +534,7 @@ function techDash() {
   };
   A.querySelectorAll("[data-s]").forEach(b => b.onclick = async () => { b.disabled = true; const r = await setStatus(+b.dataset.b, b.dataset.s); if (r) { $("de").textContent = r; b.disabled = false } });
   A.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { const j = TX.find(x => x.id == b.dataset.c); openChatWithCustomer(j) });
+  A.querySelectorAll("[data-pdf]").forEach(b => b.onclick = async () => { const o = byMonth(myJobs()).find(m => m.k == b.dataset.pdf); b.disabled = true; b.textContent = "…"; const e = await voucher(USER, b.dataset.pdf, o ? o.jobs : []); b.disabled = false; b.textContent = "PDF"; $("pe").textContent = e });
 }
 // While on the way to a customer, share the technician's live location.
 function syncWatch() {
@@ -648,9 +710,13 @@ function admTc() {
   PROFILES.filter(u => u.role == 'technician').forEach(u => { m[u.id] = { n: u.name, j: 0, g: 0, c: 0, u } });
   TX.forEach(x => { const o = m[x.tech_id] = m[x.tech_id] || { n: x.tech, j: 0, g: 0, c: 0 }; if (x.st == 'Natapos') { o.j++; o.g += x.amt } if (['Kinansela', 'Tinanggihan'].includes(x.st)) o.c++ });
   const pri = o => o.u?.doc_status == 'sinusuri' ? 0 : 1, L = Object.values(m).sort((a, b) => pri(a) - pri(b) || b.g - a.g), pend = L.filter(o => pri(o) == 0).length;
-  A.innerHTML = `<div class='panel au wide'><h2>Mga technician</h2>${pend ? `<p class='note'><b>${pend}</b> technician ang naghihintay ng pag-apruba ng dokumento. Pindutin ang <b>Suriin</b>.</p>` : ''}<div class='tw'><table><thead><tr><th>Pangalan</th><th>Dokumento</th><th>Cellphone</th><th>Natapos</th><th>Kinansela</th><th>Kabuuang bayad</th><th>Kita ng technician (${TPCT})</th><th>Fee ng CoolFix</th><th>Status</th></tr></thead><tbody>${L.map(o => `<tr><td>${esc(o.n)}</td><td>${o.u ? `${dpill(o.u.doc_status)}<br><small class='mute'>${ctName(o.u.cert_type)}</small><br><button class='chip' data-rv='${esc(o.u.id)}' style='margin-top:4px'>Suriin</button>` : '—'}</td><td>${esc(o.u?.phone || '')}</td><td>${o.j}</td><td>${o.c}</td><td>${fmt(o.g)}</td><td>${fmt(o.g - fee(o.g))}</td><td>${fmt(fee(o.g))}</td><td><span class='pill ${o.u && o.u.online ? 'ok' : ''}'>${o.u ? (o.u.online ? 'Online' : 'Offline') : '—'}</span></td></tr>`).join('') || `<tr><td colspan='9' class='mute'>Wala pang technician.</td></tr>`}</tbody></table></div></div>`;
+  const months = [...new Set([mkey(Date.now()), ...TX.filter(x => x.st == 'Natapos').map(x => mkey(doneAt(x)))])].sort().reverse(); if (!months.includes(VM)) VM = months[0];
+  A.innerHTML = `<div class='panel au wide'><h2>Mga technician</h2><label class='prow' style='max-width:420px'><span>Commission voucher para sa</span><select id='vm'>${months.map(k => `<option value='${k}' ${k == VM ? 'selected' : ''}>${mname(k)}</option>`).join('')}</select></label><p class='err' id='ve' role='alert'></p>${pend ? `<p class='note'><b>${pend}</b> technician ang naghihintay ng pag-apruba ng dokumento. Pindutin ang <b>Suriin</b>.</p>` : ''}<div class='tw'><table><thead><tr><th>Pangalan</th><th>Dokumento</th><th>Cellphone</th><th>Natapos</th><th>Kinansela</th><th>Kabuuang bayad</th><th>Kita ng technician (${TPCT})</th><th>Fee ng CoolFix</th><th>Status</th><th>Voucher</th></tr></thead><tbody>${L.map(o => `<tr><td>${esc(o.n)}</td><td>${o.u ? `${dpill(o.u.doc_status)}<br><small class='mute'>${ctName(o.u.cert_type)}</small><br><button class='chip' data-rv='${esc(o.u.id)}' style='margin-top:4px'>Suriin</button>` : '—'}</td><td>${esc(o.u?.phone || '')}</td><td>${o.j}</td><td>${o.c}</td><td>${fmt(o.g)}</td><td>${fmt(o.g - fee(o.g))}</td><td>${fmt(fee(o.g))}</td><td><span class='pill ${o.u && o.u.online ? 'ok' : ''}'>${o.u ? (o.u.online ? 'Online' : 'Offline') : '—'}</span></td><td>${o.u ? `<button class='chip' data-vc='${esc(o.u.id)}'>PDF</button>` : ''}</td></tr>`).join('') || `<tr><td colspan='10' class='mute'>Wala pang technician.</td></tr>`}</tbody></table></div></div>`;
   A.querySelectorAll('[data-rv]').forEach(b => b.onclick = () => admDoc(b.dataset.rv));
+  $('vm').onchange = e => { VM = e.target.value };
+  A.querySelectorAll('[data-vc]').forEach(b => b.onclick = async () => { const u = PROFILES.find(p => p.id == b.dataset.vc), o = byMonth(TX.filter(x => x.tech_id == u.id)).find(m => m.k == VM); b.disabled = true; const e = await voucher(u, VM, o ? o.jobs : []); b.disabled = false; $('ve').textContent = e });
 }
+let VM = '';
 // Mga requirement: litrato o PDF ng bawat dokumento, gamit ang pansamantalang link (10 minuto).
 const docTile = (u, k) => { const d = u.docs && u.docs[k]; return `<div class='dc ${d ? '' : 'miss'}'><b>${DOCS[k]}</b><small class='mute'>${d ? esc(d.name || '') + ' · ' + dstr(d.at || Date.now()) : 'Wala pang na-upload'}</small>${d ? `<div class='dv' data-du='${esc(u.id)}' data-dk='${k}'><span class='mute'>Naglo-load…</span></div>` : ''}</div>` };
 async function fillTiles(view) {
