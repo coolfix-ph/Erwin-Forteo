@@ -65,6 +65,6 @@ npm test
 Sinusubok nito ang buong daloy (sign-up, booking, live status, chat at admin) gamit ang mock ng Supabase. Para sa security rules ng database, tingnan ang mga comment sa `supabase/schema.sql`.
 
 ## Mga dapat malaman
-- Kumukuha ang CoolFix ng 15% fee sa bawat natapos na booking (`fee()` sa `www/app.js`). Wala pang online na bayad; cash o GCash nang direkta sa technician muna.
+- Kumukuha ang CoolFix ng 20% fee sa bawat natapos na booking (`fee()` sa `www/app.js`). Wala pang online na bayad; cash o GCash nang direkta sa technician muna.
 - Nag-a-update ang lokasyon ng technician kada 15 segundo habang naka-online at bukas ang app.
 - Nakikita ng sinumang naka-log in ang pangalan, serbisyo at lokasyon ng mga technician. Nakikita lang ng technician ang pangalan, cellphone at address ng customer na may booking o chat sa kanya.
