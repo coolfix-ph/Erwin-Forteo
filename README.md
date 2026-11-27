@@ -60,11 +60,13 @@ npm run sync      # kinokopya ang www/ papunta sa android/ at ios/
 
 ```bash
 npm test
+node tests/wallet.js   # wallet, top-up, quote, warranty at rating
 ```
 
 Sinusubok nito ang buong daloy (sign-up, booking, live status, chat at admin) gamit ang mock ng Supabase. Para sa security rules ng database, tingnan ang mga comment sa `supabase/schema.sql`.
 
 ## Mga dapat malaman
-- Kumukuha ang CoolFix ng 20% fee sa bawat natapos na booking (`fee()` sa `www/app.js`). Wala pang online na bayad; cash o GCash nang direkta sa technician muna.
+- **Bayad at Tech Wallet** (`supabase/006_wallet.sql`): cash o GCash diretso sa technician. Ang commission (default 20%) at booking fee ay awtomatikong ibinabawas sa **wallet credits** ng technician pagka-Natapos ng job. Nagto-top up ang technician sa GCash/Maya ng CoolFix, at inaaprubahan ito ng admin sa tab na **Wallet**. Doon din ang minimum na balance, commission %, warranty at GCash/Maya number. Sa server na kinukuwenta ang presyo, quote, commission at warranty.
+- Hindi na nakikita ng technician ang cellphone ng customer, at tinatakpan ang mga cellphone number sa chat. In-app chat ang gamit.
 - Nag-a-update ang lokasyon ng technician kada 15 segundo habang naka-online at bukas ang app.
 - Nakikita ng sinumang naka-log in ang pangalan, serbisyo at lokasyon ng mga technician. Nakikita lang ng technician ang pangalan, cellphone at address ng customer na may booking o chat sa kanya.
