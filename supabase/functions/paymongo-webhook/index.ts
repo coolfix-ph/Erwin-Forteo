@@ -18,8 +18,11 @@ async function hmac(secret: string, msg: string) {
 const ok = (msg = "ok", status = 200) => new Response(msg, { status });
 
 Deno.serve(async (req) => {
+  const clean = (k: string) => (Deno.env.get(k) ?? "").trim().replace(/^["']|["']$/g, "");
+  const WH = clean("PAYMONGO_WEBHOOK_SECRET"), SK = clean("PAYMONGO_SECRET_KEY");
+  // GET: pang-check lang kung kumpleto ang setup (walang ibinubunyag na key)
+  if (req.method === "GET") return new Response(JSON.stringify({ secret_key: /^sk_(test|live)_/.test(SK) ? SK.slice(0, 8) : !!SK, webhook_secret: WH.startsWith("whsk_") ? true : !!WH && "iba ang simula" }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
   if (req.method !== "POST") return ok("POST lang", 405);
-  const WH = Deno.env.get("PAYMONGO_WEBHOOK_SECRET") ?? "", SK = Deno.env.get("PAYMONGO_SECRET_KEY") ?? "";
   if (!WH || !SK) { console.error("Kulang ang secrets"); return ok("not configured", 503); }
 
   const raw = await req.text();

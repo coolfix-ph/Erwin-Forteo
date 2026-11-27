@@ -17,8 +17,12 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return out({ error: "POST lang" }, 405);
 
-  const SK = Deno.env.get("PAYMONGO_SECRET_KEY") ?? "";
-  if (!/^sk_(test|live)_/.test(SK)) return out({ error: "Hindi pa naka-set up ang online na bayad. Makipag-ugnayan sa admin." }, 503);
+  const SK = (Deno.env.get("PAYMONGO_SECRET_KEY") ?? "").trim().replace(/^["']|["']$/g, "");
+  if (!/^sk_(test|live)_/.test(SK)) {
+    // Walang ibinubunyag na key; uri lang ng problema para madaling ayusin
+    const why = !SK ? "walang PAYMONGO_SECRET_KEY" : SK.startsWith("pk_") ? "public key (pk_) ang nailagay, dapat secret key (sk_)" : "hindi sk_test_ o sk_live_ ang simula";
+    return out({ error: "Hindi pa naka-set up ang online na bayad. Makipag-ugnayan sa admin.", setup: why }, 503);
+  }
 
   const url = Deno.env.get("SUPABASE_URL")!;
   const admin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
