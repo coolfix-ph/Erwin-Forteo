@@ -221,21 +221,21 @@ function authView(){
  A.hidden=false;$("app").hidden=true;$("lo").hidden=true;$("tabs").hidden=true;$("who").textContent="";
  const su=mode=="signup",tc=role=="technician";
  A.innerHTML=`<div class="panel au"><img class="logo big" src="${LOGO}" alt="CoolFix"><div class="chips"><button class="chip" aria-pressed="${!su}" data-m="login">Mag-log in</button><button class="chip" aria-pressed="${su}" data-m="signup">Gumawa ng account</button></div>
- ${su?`<p class="mute" style="margin:0 0 6px">Mag-sign up bilang</p><div class="chips"><button class="chip" aria-pressed="${!tc}" data-r="customer">Customer</button><button class="chip" aria-pressed="${tc}" data-r="technician">Technician</button></div><label>Buong pangalan<input id="f_n" autocomplete="name"></label><label>Cellphone number<input id="f_p" type="tel" placeholder="09XXXXXXXXX" autocomplete="tel"></label>`:""}
+ ${su?`${role=="admin"?`<p class="mute" style="margin:0 0 6px"><b>Admin setup:</b> gagawin nitong admin ang account na ito sa device na ito.</p>`:`<p class="mute" style="margin:0 0 6px">Mag-sign up bilang</p><div class="chips"><button class="chip" aria-pressed="${!tc}" data-r="customer">Customer</button><button class="chip" aria-pressed="${tc}" data-r="technician">Technician</button></div>`}<label>Buong pangalan<input id="f_n" autocomplete="name"></label><label>Cellphone number<input id="f_p" type="tel" placeholder="09XXXXXXXXX" autocomplete="tel"></label>`:""}
  <label>Email<input id="f_e" type="email" autocomplete="email"></label>
  <label>Password${su?" (hindi bababa sa 8 character)":""}<input id="f_w" type="password" autocomplete="${su?"new-password":"current-password"}"></label>
  ${su&&!tc?`<label>Address<input id="f_a" placeholder="Brgy., Lungsod"></label>`:""}
  ${su&&tc?`<p class="mute" style="margin:12px 0 6px">Anong serbisyo ang kaya mo?</p><div class="chips">${SERVICES.slice(1).map(s=>`<button class="chip" data-v="${s}" aria-pressed="${sset.has(s)}">${s}</button>`).join("")}</div><label>Lugar na sakop<input id="f_a" placeholder="hal. Quezon City, Marikina"></label>`:""}
  <p class="err" id="er" role="alert">${err}</p>
- <button class="btn" id="go">${su?"Gumawa ng account":"Mag-log in"}</button><p class="or">o</p><button class="gbtn" id="gg"><svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.5 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.4 0 20.1 0 24s.9 7.6 2.6 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.8 2.3-8.4 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>${su?"Mag-sign up gamit ang Google":"Mag-log in gamit ang Google"}</button></div>`;
+ <button class="btn" id="go">${su?"Gumawa ng account":"Mag-log in"}</button>${!USERS.some(u=>u.role=="admin")&&role!="admin"?`<p class="or"><button class="chip" id="sa">I-set up ang admin account</button></p>`:""}<p class="or">o</p><button class="gbtn" id="gg"><svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.5 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.4 0 20.1 0 24s.9 7.6 2.6 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.8 2.3-8.4 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>${su?"Mag-sign up gamit ang Google":"Mag-log in gamit ang Google"}</button></div>`;
  A.querySelectorAll("[data-m]").forEach(b=>b.onclick=()=>{mode=b.dataset.m;err="";authView()});
  A.querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{role=b.dataset.r;err="";authView()});
  A.querySelectorAll("[data-v]").forEach(b=>b.onclick=()=>{const v=b.dataset.v;sset.has(v)?sset.delete(v):sset.add(v);b.setAttribute("aria-pressed",sset.has(v))});
- $("go").onclick=su?doSignup:doLogin;$("gg").onclick=googleView;
+ $("go").onclick=su?doSignup:doLogin;$("sa")&&($("sa").onclick=()=>{mode="signup";role="admin";err="";authView()});A.querySelectorAll("[data-m]").forEach(b=>b.addEventListener("click",()=>{if(role=="admin"){role="customer";authView()}}));$("gg").onclick=googleView;
 }
 async function doSignup(){
  const v=i=>($(i)?.value||"").trim(),n=v("f_n"),p=v("f_p").replace(/[\s-]/g,""),e=v("f_e").toLowerCase(),w=$("f_w").value,a=v("f_a");
- const bad=!n?"Ilagay ang buong pangalan mo.":!/^(09|\+639)\d{9}$/.test(p)?"Mali ang cellphone number. Gamitin ang format na 09XXXXXXXXX.":!/^\S+@\S+\.\S+$/.test(e)?"Mali ang email address.":w.length<8?"Masyadong maikli ang password. Gamitin ang hindi bababa sa 8 character.":USERS.some(u=>u.email==e)?"May account na gamit ang email na ito. Subukang mag-log in.":role=="technician"&&!sset.size?"Pumili ng kahit isang serbisyo.":"";
+ const bad=!n?"Ilagay ang buong pangalan mo.":!/^(09|\+639)\d{9}$/.test(p)?"Mali ang cellphone number. Gamitin ang format na 09XXXXXXXXX.":!/^\S+@\S+\.\S+$/.test(e)?"Mali ang email address.":w.length<8?"Masyadong maikli ang password. Gamitin ang hindi bababa sa 8 character.":role=="admin"&&USERS.some(u=>u.role=="admin")?"May admin na sa device na ito.":USERS.some(u=>u.email==e)?"May account na gamit ang email na ito. Subukang mag-log in.":role=="technician"&&!sset.size?"Pumili ng kahit isang serbisyo.":"";
  if(bad){$("er").textContent=err=bad;return}
  const u={role,name:n,phone:p,email:e,pw:await hp(w),addr:a,svc:[...sset],online:false};
  USERS.push(u);save(K,USERS);sset=new Set();enter(u);
@@ -487,8 +487,7 @@ function doGoogle(){
 }
 $("lo").onclick=()=>{cancelAnimationFrame(anim);clearTimeout(jt);save(S,null);USER=null;job=0;mode="login";authView()};
 (async()=>{
- if(!USERS.some(u=>u.role=='admin')){USERS.push({role:'admin',name:'Admin',phone:'',email:'admin@coolfix.ph',pw:await hp('Admin#2026'),addr:'',svc:[],online:false});save(K,USERS)}
- const last=USERS.find(x=>x.email==load(S));last?enter(last):authView();
+  const last=USERS.find(x=>x.email==load(S));last?enter(last):authView();
 })();
 </script>
 </body>
