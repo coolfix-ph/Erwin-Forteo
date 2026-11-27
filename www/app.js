@@ -700,7 +700,8 @@ function admSv() {
 // ---------- Google Maps (optional) ----------
 const GM = !!CFG.mapsKey;
 let GL = false, gmap, gme, gmk = [], gRt = [], GT = 0;
-const dot = (s, c) => ({ path: google.maps.SymbolPath.CIRCLE, scale: s, fillColor: c, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 });
+// Marker bilang SVG (walang ibang file na kailangang i-load).
+const svgPin = (px, c, txt, ring) => { const r = px / 2, v = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}">${ring ? `<circle cx="${r}" cy="${r}" r="${r}" fill="${c}" fill-opacity=".25"/>` : ''}<circle cx="${r}" cy="${r}" r="${ring ? r * .45 : r - 1.5}" fill="${c}" stroke="#fff" stroke-width="${ring ? 3 : 2.5}"/>${txt ? `<text x="${r}" y="${r}" dy=".35em" text-anchor="middle" font-family="Arial,sans-serif" font-weight="700" font-size="${px * .42}" fill="#fff">${txt.replace(/[<&]/g, '')}</text>` : ''}</svg>`; return { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(v), scaledSize: new google.maps.Size(px, px), anchor: new google.maps.Point(r, r) } };
 window.gm_authFailure = () => { GL = false; $('gm').hidden = true; $('svg').style.display = ''; pins() };
 function loadGM() { return new Promise(r => { if (!GM) return r(false); if (window.google?.maps) return r(true); window.__gm = () => r(true); const s = document.createElement('script'); s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(CFG.mapsKey) + '&callback=__gm&loading=async'; s.onerror = () => r(false); document.head.appendChild(s) }) }
 async function initGM() {
@@ -708,7 +709,7 @@ async function initGM() {
   if (GL || !await loadGM()) return;
   GL = true; $('svg').style.display = 'none'; const el = $('gm'); el.hidden = false;
   gmap = new google.maps.Map(el, { center: C, zoom: 14, disableDefaultUI: true, zoomControl: true, clickableIcons: false, gestureHandling: 'greedy' });
-  gme = new google.maps.Marker({ position: C, map: gmap, title: 'Ikaw', icon: dot(9, '#2F7FE0') });
+  gme = new google.maps.Marker({ position: C, map: gmap, title: 'Ikaw', icon: svgPin(30, '#2F7FE0', '', true), zIndex: 1 });
   gpins();
 }
 function gpins() {
@@ -716,7 +717,7 @@ function gpins() {
   if (LF) return lpins();
   gmk.forEach(m => m.setMap(null)); gmk = [];
   const b = new google.maps.LatLngBounds(C);
-  list().forEach(t => { const p = tpos(t); b.extend(p); const m = new google.maps.Marker({ position: p, map: gmap, title: t.n, label: { text: ini(t.n)[0], color: '#fff', fontWeight: '700' }, icon: dot(sel === t ? 16 : 12, '#14378F') }); m.addListener('click', () => pick(t)); gmk.push(m) });
+  list().forEach(t => { const p = tpos(t); b.extend(p); const m = new google.maps.Marker({ position: p, map: gmap, title: t.n, icon: svgPin(sel === t ? 38 : 30, '#14378F', ini(t.n)[0]), zIndex: 2 }); m.addListener('click', () => pick(t)); gmk.push(m) });
   if (sel) gmap.panTo(tpos(sel)); else gmap.fitBounds(b, 40);
 }
 function gClear() { GT++; if (LF) { lrt.forEach(x => x.remove()); lrt = []; return } gRt.forEach(x => x.setMap(null)); gRt = [] }
@@ -725,7 +726,7 @@ async function gtrack(t, b) {
   if (LF) return ltrack(t, b);
   gClear(); const tk = GT; gmk.forEach(m => m.setMap(null));
   const o = tpos(t), d = C;
-  const mv = new google.maps.Marker({ position: o, map: gmap, label: { text: ini(t.n)[0], color: '#fff', fontWeight: '700' }, icon: dot(15, '#14378F') }); gRt.push(mv);
+  const mv = new google.maps.Marker({ position: o, map: gmap, title: t.n, icon: svgPin(36, '#14378F', ini(t.n)[0]), zIndex: 2 }); gRt.push(mv);
   if (!ACTIVE.includes(b.st)) return;
   const r = await gRoute(o, d); if (tk != GT) return;
   const path = r ? r.path : [o, d];
@@ -776,9 +777,9 @@ const PIN_SVG = `<svg viewBox="0 0 44 58" aria-hidden="true"><path d="M22 57C9 4
 const ME_SVG = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>`;
 // Google: address mula sa Geocoding API.
 function gAddr(r) {
-  const c = t => (r.address_components || []).find(x => x.types.includes(t))?.long_name || '';
-  const road = [c('street_number'), c('route')].filter(Boolean).join(' '), poi = (r.types || []).some(t => ['premise', 'establishment', 'point_of_interest', 'natural_feature'].includes(t)) ? (r.formatted_address || '').split(',')[0] : '';
-  const top = poi && poi != road ? poi : road || c('neighborhood') || c('sublocality') || (r.formatted_address || '').split(',')[0];
+  const c = t => (r.address_components || []).find(x => x.types.includes(t))?.long_name || '', fa = (r.formatted_address || '').replace(/^[2-9A-Z]{4,8}\+[2-9A-Z]{2,3},?\s*/, '');
+  const road = [c('street_number'), c('route')].filter(Boolean).join(' '), poi = (r.types || []).some(t => ['establishment', 'point_of_interest', 'natural_feature'].includes(t)) ? fa.split(',')[0] : '';
+  const top = poi && poi != road ? poi : road || c('neighborhood') || c('sublocality') || fa.split(',')[0];
   const rest = [poi && poi != road ? road : '', c('neighborhood'), c('sublocality_level_1') || c('sublocality'), c('locality'), c('administrative_area_level_2')].filter((x, i, a) => x && x != top && a.indexOf(x) == i);
   return { top: top || 'Napiling lugar', sub: rest.join(', ') };
 }
@@ -790,8 +791,10 @@ const PICK = {
   },
   google: {
     map(el, start) { const m = new google.maps.Map(el, { center: start || C, zoom: 18, disableDefaultUI: true, clickableIcons: false, gestureHandling: 'greedy' }); return { center: () => { const c = m.getCenter(); return { lat: c.lat(), lng: c.lng() } }, go: p => { m.setCenter(p); m.setZoom(18) }, on: (a, b) => { m.addListener('dragstart', a); m.addListener('idle', b) }, remove: () => { } } },
-    async reverse(c) { try { const { results } = await new google.maps.Geocoder().geocode({ location: c }); const r = results.find(x => x.types.includes('street_address') || x.types.includes('premise')) || results[0]; return r ? gAddr(r) : null } catch (e) { return null } },
-    async search(q) { try { const { results } = await new google.maps.Geocoder().geocode({ address: q, componentRestrictions: { country: 'PH' } }); return results.slice(0, 6).map(r => ({ ...gAddr(r), lat: r.geometry.location.lat(), lng: r.geometry.location.lng() })) } catch (e) { return [] } }
+    async reverse(c) { try { const { results } = await new google.maps.Geocoder().geocode({ location: c }); const ok = results.filter(x => !x.types.includes('plus_code')), r = ok.find(x => x.types.includes('street_address') || x.types.includes('premise')) || ok[0]; return r ? gAddr(r) : null } catch (e) { return null } },
+    async search(q) {
+      try { const { Place } = await google.maps.importLibrary('places'); const { places } = await Place.searchByText({ textQuery: q, fields: ['displayName', 'formattedAddress', 'location'], region: 'ph', locationBias: C, maxResultCount: 6 }); if (places && places.length) return places.map(x => { const fa = (x.formattedAddress || '').replace(/^[2-9A-Z]{4,8}\+[2-9A-Z]{2,3},?\s*/, ''); return { top: x.displayName || fa.split(',')[0], sub: fa.split(',').filter(y => y.trim() != x.displayName).join(',').trim(), lat: x.location.lat(), lng: x.location.lng() } }) } catch (e) { console.warn('places', e) }
+      try { const { results } = await new google.maps.Geocoder().geocode({ address: q, componentRestrictions: { country: 'PH' } }); return results.filter(x => !x.types.includes('plus_code')).slice(0, 6).map(r => ({ ...gAddr(r), lat: r.geometry.location.lat(), lng: r.geometry.location.lng() })) } catch (e) { return [] } }
   }
 };
 // Buong-screen na mapa: igalaw ang mapa para itapat ang pin sa eksaktong lugar.
