@@ -37,6 +37,13 @@ let TAB = "find", CUR = null, VIEW = "", TRACK = null, svc = "Lahat", sel = null
 let channel = null, watchId = null, lastLoc = 0;
 let ED = null, EC = 0, AF = { st: 'Lahat', q: '' };
 let CT = null, FILES = {}, REQ = true, RE = false;
+// Booking fee (sa customer, buong napupunta sa CoolFix) at mga serbisyong NC II lang.
+const DEFNC2 = ["Compressor Replacement", "Refrigerant Recharging", "Refrigerant Charging", "Refrigerant Leak Detection", "PCB Replacement"];
+let FEE = 49, NC2 = [...DEFNC2];
+const isNC2 = it => !!it && (/^aircon install/i.test(it.t || '') || NC2.some(x => (it.t + ': ' + it.n).toLowerCase().includes(String(x).toLowerCase())));
+const certified = t => t && t.cert == 'nc2' && t.ds == 'aprubado';
+const CERT = `<span class="cert" title="May aprubadong NC II certificate"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M12 2l2.6 2.2 3.4-.3.9 3.3 2.9 1.8-1.3 3.2 1.3 3.2-2.9 1.8-.9 3.3-3.4-.3L12 22l-2.6-2.2-3.4.3-.9-3.3-2.9-1.8L3.5 12 2.2 8.8l2.9-1.8.9-3.3 3.4.3z" fill="currentColor"/><path d="M8 12.5l2.6 2.5L16 9.5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>NC II Certified</span>`;
+const total = b => (b.amt || 0) + (b.booking_fee || 0);
 
 // ---------- Technician documents (NC II, o DTI Permit + BIR COR) ----------
 const DOCS = { nc2: 'NC II Certificate', dti: 'DTI Business Permit', bir: 'BIR COR (Form 2303)' };
@@ -97,7 +104,7 @@ const eta = t => Math.max(4, Math.round(dist(t) * 5 + 3));
 const getLoc = () => new Promise(r => { if (!navigator.geolocation) return r(null); navigator.geolocation.getCurrentPosition(p => r({ lat: p.coords.latitude, lng: p.coords.longitude }), () => r(null), { enableHighAccuracy: true, timeout: 8000 }) });
 
 // ---------- Data loading ----------
-const toTech = p => place({ id: p.id, n: p.name, s: p.services || [], online: p.online, lat: p.lat, lng: p.lng, addr: p.addr });
+const toTech = p => place({ id: p.id, n: p.name, s: p.services || [], online: p.online, lat: p.lat, lng: p.lng, addr: p.addr, cert: p.cert_type, ds: p.doc_status });
 async function loadSettings() {
   const { data } = await sb.from("settings").select("key,value");
   const m = Object.fromEntries((data || []).map(r => [r.key, r.value]));
@@ -105,13 +112,15 @@ async function loadSettings() {
   if (Array.isArray(m.other_charges) && m.other_charges.length) OC = m.other_charges;
   if (m.prices && typeof m.prices == "object") PRICES = { ...DEF, ...m.prices };
   REQ = m.require_doc_approval !== false;
+  if (typeof m.booking_fee == "number" && m.booking_fee >= 0) FEE = Math.round(m.booking_fee);
+  if (Array.isArray(m.nc2_only)) NC2 = m.nc2_only;
 }
 async function saveSetting(key, value) {
   const { error } = await sb.from("settings").upsert({ key, value, updated_at: new Date().toISOString() });
   return error;
 }
 async function loadTechs() {
-  const { data } = await sb.from("profiles").select("id,name,services,online,lat,lng,addr").eq("role", "technician");
+  const { data } = await sb.from("profiles").select("id,name,services,online,lat,lng,addr,cert_type,doc_status").eq("role", "technician");
   const all = data || [];
   TECHS = all.filter(p => p.online && p.id != USER?.id).map(toTech);
   return all;
@@ -324,7 +333,7 @@ function show() {
 }
 
 // ---------- Customer: find & book ----------
-function list() { return TECHS.filter(t => t.online && (svc == "Lahat" || (SVM[svc] || [svc]).some(x => t.s.includes(x)))).sort((a, b) => dist(a) - dist(b)) }
+function list() { const nc = isNC2(item); return TECHS.filter(t => t.online && (!nc || certified(t)) && (svc == "Lahat" || (SVM[svc] || [svc]).some(x => t.s.includes(x)))).sort((a, b) => dist(a) - dist(b)) }
 function pins() {
   $("pins").innerHTML = list().map((t, i) => `<g class="pin" tabindex="0" data-i="${esc(t.id)}"><circle cx="${t.x}" cy="${t.y}" r="${sel === t ? 4.4 : 3.4}" fill="var(--orange)" stroke="#fff" stroke-width="1"/><text x="${t.x}" y="${t.y + 1.2}" text-anchor="middle" font-size="3" font-weight="700" fill="#fff">${esc(ini(t.n)[0])}</text></g>`).join("");
   document.querySelectorAll(".pin").forEach(p => { p.onclick = () => pick(TECHS.find(t => t.id == p.dataset.i)); p.onkeydown = e => { if (e.key == "Enter") p.onclick() } }); if (GL) gpins();
@@ -337,13 +346,13 @@ function home() {
   if (GL) gClear(); $("route").innerHTML = ""; sel = null;
   svc = cat ? (cat.m || cat.k) : "Lahat"; pins();
   const L = list(), act = myBookings().filter(x => ACTIVE.includes(x.st));
-  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}"><div class="av">${esc(ini(t.n))}</div><div><b>${esc(t.n)}</b><small>${esc(t.s.join(', '))}</small></div><div class="km">${dist(t).toFixed(1)} km<small>~${eta(t)} min</small></div></button>`).join("") || '<p class="mute">Wala pang online na technician para sa serbisyong ito. Subukan ulit mamaya.</p>';
+  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}"><div class="av">${esc(ini(t.n))}</div><div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}<small>${esc(t.s.join(', '))}</small></div><div class="km">${dist(t).toFixed(1)} km<small>~${eta(t)} min</small></div></button>`).join("") || '<p class="mute">Wala pang online na technician para sa serbisyong ito. Subukan ulit mamaya.</p>';
   const hd = `<div class='hello'><b>Kumusta, ${esc(first(USER.name))}!</b><span>${TECHS.filter(t => t.online).length} technician ang online ngayon</span></div><div class='stats' id='hstats'>${statsHtml()}</div>${act.length ? `<p class="note">May aktibo kang booking. <button class="chip" id="ab">Tingnan</button></p>` : ""}`;
   let body;
   if (!cat) body = `<h2>Anong serbisyo ang kailangan mo?</h2><div class="cats">${CAT.map((c, i) => `<button class="cat" data-c="${i}"><b>${esc(c.t)}</b><small>${esc(c.d)}</small></button>`).join("")}</div><p class="mute" style="font-size:13px">Tingnan ang <b>Rate guide</b> tab para sa lahat ng presyo at iba pang singil.</p>`;
   else body = `<button class="chip" id="cb">‹ Lahat ng serbisyo</button><h2 style="margin:10px 0 2px">${esc(cat.t)}</h2><p class="mute" style="margin:0 0 4px;font-size:13px">${esc(cat.n)}</p>
- ${cat.g.map((g, gi) => `<p class="gh">${esc(g[0])}</p>${g[1].map((x, xi) => `<button class="sv" aria-pressed="${!!item && item.n == x[0] && item.c == cat.k}" data-g="${gi}" data-x="${xi}"><span>${esc(x[0])}</span><b>${fmt(x[1])}</b></button>`).join("")}`).join("")}
- <h3 style="margin:16px 0 4px">${item ? 'Pumili ng technician' : 'Pumili muna ng serbisyo sa itaas'}</h3>${item ? `<p class="mute" style="margin:0 0 4px;font-size:13px">${L.length} technician na malapit sa'yo para sa ${esc(item.n)}</p>${tl}` : ''}`;
+ ${cat.g.map((g, gi) => `<p class="gh">${esc(g[0])}</p>${g[1].map((x, xi) => `<button class="sv" aria-pressed="${!!item && item.n == x[0] && item.c == cat.k}" data-g="${gi}" data-x="${xi}"><span>${esc(x[0])}${isNC2({ t: cat.t, n: x[0] }) ? ' <small class="nct">NC II lang</small>' : ''}</span><b>${fmt(x[1])}</b></button>`).join("")}`).join("")}
+ <h3 style="margin:16px 0 4px">${item ? 'Pumili ng technician' : 'Pumili muna ng serbisyo sa itaas'}</h3>${item ? `${isNC2(item) ? `<p class="note">Para sa kaligtasan, <b>NC II certified</b> na technician lang ang pwede sa ${esc(item.n)}.</p>` : ''}<p class="mute" style="margin:0 0 4px;font-size:13px">${L.length} technician na malapit sa'yo para sa ${esc(item.n)}</p>${tl}` : ''}`;
   $("panel").innerHTML = hd + body;
   if ($("ab")) $("ab").onclick = () => { TRACK = act[0]; trackView() };
   document.querySelectorAll(".cat").forEach(b => b.onclick = () => { cat = CAT[b.dataset.c]; item = null; home() });
@@ -359,19 +368,19 @@ function pick(t) {
   if (!item) { sel = t; pins(); $("panel").insertAdjacentHTML("afterbegin", `<p class="note">Pumili muna ng serbisyo bago mag-book kay ${esc(first(t.n))}.</p>`); return }
   VIEW = "pick"; sel = t; pins();
   const au = OC.filter(o => o.a), opt = OC.map((o, i) => o.a ? '' : `<label class="ck"><input type="checkbox" data-oc="${i}"> ${esc(o.n)} <small>${ocs(o)}</small></label>`).join("");
-  $("panel").innerHTML = `<h2>${esc(t.n)}</h2><p class="mute" style="margin:0">${esc(t.s.join(', '))} · ${dist(t).toFixed(1)} km ang layo</p>
+  $("panel").innerHTML = `<h2>${esc(t.n)}</h2>${certified(t) ? CERT : ''}<p class="mute" style="margin:0">${esc(t.s.join(', '))} · ${dist(t).toFixed(1)} km ang layo</p>
  <div class="price" style="margin-top:12px"><span>${esc(item.t)}<br><b style="font-size:16px">${esc(item.n)}</b></span><span class="mute">${fmt(item.p)}</span></div>
  ${opt ? `<p class="gh">Dagdag na singil (kung kailangan)</p>${opt}` : ''}
  <label class="mute" style="display:block;margin-top:10px">Address<input id="ad" value="${esc(USER.addr || '')}" placeholder="Bahay/Unit, Kalye, Brgy., Lungsod"></label>${LF || GM ? `<button class="chip adb" id="adm" type="button"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 22c-5-6.5-8-10.5-8-14a8 8 0 0 1 16 0c0 3.5-3 7.5-8 14z" fill="currentColor"/><circle cx="12" cy="8" r="3" fill="var(--panel)"/></svg>Piliin sa mapa ang eksaktong lugar</button>` : ''}
  <label class="mute" style="display:block;margin-top:10px">Oras<select id="tm"><option>Ngayon (~${eta(t)} min)</option><option>Mamayang hapon</option><option>Bukas ng umaga</option></select></label>
- <div class="price"><span>Tinatayang bayad${au.length ? `<br><small class="mute">kasama ang ${au.map(o => esc(o.n)).join(', ')}</small>` : ''}</span><b id="pr"></b></div><p class="mute" style="font-size:13px;margin:4px 0 0">Suggested starting rates ito. Maaaring magbago ang huling bayad depende sa aktwal na check ng unit. Hiwalay ang singil sa parte.</p>
+ ${FEE ? `<div class="price"><span>Booking fee<br><small class="mute">para sa CoolFix app</small></span><span class="mute">${fmt(FEE)}</span></div>` : ''}<div class="price"><span>Tinatayang bayad${au.length ? `<br><small class="mute">kasama ang ${au.map(o => esc(o.n)).join(', ')}</small>` : ''}</span><b id="pr"></b></div><p class="mute" style="font-size:13px;margin:4px 0 0">Suggested starting rates ito. Maaaring magbago ang huling bayad depende sa aktwal na check ng unit. Hiwalay ang singil sa parte.</p>
  <p class="err" id="be" role="alert"></p>
  <button class="btn" id="bk">I-book si ${esc(first(t.n))}</button>
  <button class="btn alt" id="mg">Mag-message kay ${esc(first(t.n))}</button>
  <button class="btn alt" id="bc">Bumalik sa listahan</button>`;
   const on = i => OC[i].a || !!document.querySelector(`[data-oc="${i}"]:checked`);
   const est = () => { let a = item.p, p = 0, cu = 0; OC.forEach((o, i) => { if (!on(i)) return; if (o.k == 'fixed') a += o.p; else if (o.k == 'pct') p += o.p / 100; else cu = 1 }); const v = Math.round(a * (1 + p)); return [v, cu] },
-    up = () => { const e = est(); $("pr").textContent = fmt(e[0]) + (e[1] ? ' + custom' : '') };
+    up = () => { const e = est(); $("pr").textContent = fmt(e[0] + FEE) + (e[1] ? ' + custom' : '') };
   document.querySelectorAll("[data-oc]").forEach(i => i.onchange = up); up();
   $("bc").onclick = home; $("mg").onclick = () => openChat(t);
   if ($("adm")) $("adm").onclick = () => addressPicker(C, v => { if (!v) return; $("ad").value = v.text; C = { lat: v.lat, lng: v.lng }; TECHS.forEach(place); if (GL) mapMe() });
@@ -379,7 +388,7 @@ function pick(t) {
     const ad = $("ad").value.trim(); if (ad.length < 5) { $("be").textContent = "Ilagay ang buong address mo."; return }
     const extras = OC.filter((o, i) => !o.a && on(i)).map(o => o.n);
     busy("bk", true);
-    const { data, error } = await sb.from("bookings").insert({ customer_id: USER.id, tech_id: t.id, cust_name: USER.name, cust_phone: USER.phone || "", tech_name: t.n, svc: item.t + ': ' + item.n + (extras.length ? ' + ' + extras.join(', ') : ''), address: ad, sched: $("tm").value, amt: est()[0] }).select().single();
+    const { data, error } = await sb.from("bookings").insert({ customer_id: USER.id, tech_id: t.id, cust_name: USER.name, cust_phone: USER.phone || "", tech_name: t.n, svc: item.t + ': ' + item.n + (extras.length ? ' + ' + extras.join(', ') : ''), address: ad, sched: $("tm").value, amt: est()[0], booking_fee: FEE }).select().single();
     busy("bk", false);
     if (error) { $("be").textContent = "Hindi na-book: " + error.message; return }
     if (!USER.addr) { USER.addr = ad; sb.from("profiles").update({ addr: ad }).eq("id", USER.id) }
@@ -403,7 +412,7 @@ function trackView() {
  <p class="mute" style="margin:0 0 12px">${esc(b.svc)} · ${esc(b.address)}</p>
  <div class="eta">${big}</div><div class="mute">${sub}</div>
  ${stage != null ? `<ul class="steps">${STEPS.map((s, i) => `<li class="${i <= stage ? 'on' : ''}">${s}</li>`).join('')}</ul>` : ''}
- <div class="row"><span class="mute">Tinatayang bayad</span><b>${fmt(b.amt)}</b></div>
+ <div class="row"><span class="mute">Tinatayang bayad${b.booking_fee ? `<br><small>kasama ang ${fmt(b.booking_fee)} booking fee</small>` : ''}</span><b>${fmt(total(b))}</b></div>
  <button class="btn" id="tc">Mag-message sa technician</button>
  ${["Bago", "Papunta na"].includes(b.st) ? `<button class="btn alt" id="cx">Kanselahin ang booking</button>` : ""}
  <button class="btn alt" id="bh">Bumalik</button><p class="err" id="te" role="alert"></p>`;
@@ -428,7 +437,7 @@ function techDash() {
   ${b.st == 'Bago' ? `<button class="btn" data-s="Papunta na" data-b="${b.id}">Tanggapin at pumunta</button><button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Papunta na' ? `<button class="btn" data-s="Dumating na" data-b="${b.id}">Dumating na ako</button>` : `<button class="btn" data-s="Natapos" data-b="${b.id}">Tapos na ang trabaho</button>`}
   <button class="btn alt" data-c="${b.id}">Mag-message sa customer</button></div>`;
   const ds = u.doc_status || "kulang", lock = !u.online && (REQ ? ds != "aprubado" : !["sinusuri", "aprubado"].includes(ds)), form = ds != "sinusuri" || RE;
-  const docBox = ds == "aprubado" && !RE ? `<p class="mute" style="margin:6px 0 0">Dokumento: ${ctName(u.cert_type)} ${dpill(ds)} <button class="chip" id="reup" style="padding:2px 9px;font-size:12px">Palitan</button></p>`
+  const docBox = ds == "aprubado" && !RE ? `<p class="mute" style="margin:6px 0 0">Dokumento: ${ctName(u.cert_type)} ${dpill(ds)} <button class="chip" id="reup" style="padding:2px 9px;font-size:12px">Palitan</button></p>${u.cert_type == 'nc2' ? `<p class="note">${CERT} Makikita ng mga customer ang badge mo, at pwede kang tumanggap ng installation at major repair.</p>` : `<p class="note">Mag-upload ng <b>NC II</b> para magkaroon ng NC II Certified badge at makatanggap ng installation at major repair (hal. compressor, refrigerant).</p>`}`
     : `<div class="jb doc ${ds}"><b>${ds == "aprubado" ? "Palitan ang dokumento" : ds == "sinusuri" ? "Sinusuri na ng admin ang dokumento mo" : ds == "tinanggihan" ? "Hindi naaprubahan ang dokumento mo" : "Kailangan ng dokumento bago makatanggap ng booking"}</b>
     <p class="mute" style="margin:4px 0">${ds == "sinusuri" && !RE ? `${ctName(u.cert_type)} · ${REQ ? "Makakapag-online ka kapag naaprubahan na ng admin." : "Pwede ka nang mag-online habang sinusuri."}` : ds == "tinanggihan" ? `Dahilan: ${esc(u.doc_note || "—")}. Mag-upload ulit ng malinaw na kopya.` : ds == "aprubado" ? "Kapag nagpalit ka, susuriin ulit ito ng admin at hindi ka muna makakapag-online." : "I-upload ang NC II certificate mo. Kung wala, ang DTI Business Permit at BIR COR (Form 2303)."}</p>
     ${form ? `<div id="dz"></div><p class="err" id="dze" role="alert"></p><button class="btn" id="dsub">I-submit ang dokumento</button>${RE ? `<button class="btn alt" id="dcx">Huwag na</button>` : ""}` : `<button class="chip" id="reup">Palitan ang dokumento</button>`}</div>`;
@@ -563,6 +572,7 @@ function admOv() {
   const st = t0.getTime() - (AP - 1) * DAY, pst = st - AP * DAY;
   const cur = TX.filter(x => x.ts >= st), prev = TX.filter(x => x.ts >= pst && x.ts < st);
   const done = a => a.filter(x => x.st == 'Natapos'), sum = a => a.reduce((n, x) => n + x.amt, 0);
+  const bf = a => a.reduce((n, x) => n + (x.booking_fee || 0), 0), rev = a => fee(sum(done(a))) + bf(done(a));
   const g = sum(done(cur)), gp = sum(done(prev)), nd = done(cur).length, ndp = done(prev).length;
   const act = TX.filter(x => ACTIVE.includes(x.st));
   const techs = PROFILES.filter(u => u.role == 'technician'), custs = PROFILES.filter(u => u.role == 'customer');
@@ -580,7 +590,7 @@ function admOv() {
   A.innerHTML = `<div class='dash'>${pend ? `<p class='note'><b>${pend}</b> technician ang naghihintay ng pag-apruba ng dokumento. <button class='chip' id='gotc'>Suriin</button></p>` : ''}
   <div class='dh'><div><h2>Overview</h2><p class='mute'>${t0.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p></div>
    <div class='chips' role='group' aria-label='Period'>${[[1, 'Ngayon'], [7, '7 araw'], [30, '30 araw']].map(([n, l]) => `<button class='chip' aria-pressed='${AP == n}' data-ap='${n}'>${l}</button>`).join('')}</div></div>
-  <div class='kpis'>${kpi('Kabuuang bayad', fmt(g), dl(g, gp))}${kpi('Kita ng CoolFix (15%)', fmt(fee(g)), dl(fee(g), fee(gp)))}${kpi('Natapos na booking', nd + `<small> / ${cur.length}</small>`, dl(nd, ndp))}${kpi('Aktibong booking', act.length, act.filter(x => x.st == 'Bago').length + ' naghihintay ng technician')}</div>
+  <div class='kpis'>${kpi('Kabuuang bayad', fmt(g), dl(g, gp))}${kpi('Kita ng CoolFix', fmt(rev(cur)), `15% + ${fmt(bf(done(cur)))} booking fee`)}${kpi('Natapos na booking', nd + `<small> / ${cur.length}</small>`, dl(nd, ndp))}${kpi('Aktibong booking', act.length, act.filter(x => x.st == 'Bago').length + ' naghihintay ng technician')}</div>
   <div class='grid2'>
    <section class='card'><div class='ch'><h3>Kita kada araw</h3><span class='mute'>Natapos na booking lang</span></div>
     ${AP == 1 ? `<div class='hero'><b>${fmt(g)}</b><span class='mute'>${nd} natapos na booking ngayong araw</span></div>` : `<div class='chart' id='ch'><div class='yax'>${ticks.map(t => `<span>${t >= 1000 ? '₱' + (t / 1000) + 'k' : fmt(t)}</span>`).join('')}</div>
@@ -613,13 +623,14 @@ function admOv() {
 function admTx() {
   const S = ['Lahat', 'Bago', 'Papunta na', 'Dumating na', 'Natapos', 'Kinansela', 'Tinanggihan'], q = AF.q.toLowerCase();
   const L = TX.filter(x => (AF.st == 'Lahat' || x.st == AF.st) && (x.tech + x.cust + x.svc + x.code).toLowerCase().includes(q)).sort((a, b) => b.ts - a.ts);
-  A.innerHTML = `<div class='panel au wide'><h2>Mga transaction</h2><div class='chips'>${S.map(s => `<button class='chip' aria-pressed='${AF.st == s}' data-s='${s}'>${s}</button>`).join('')}</div><input id='aq' placeholder='Hanapin: technician, customer, serbisyo' value='${esc(AF.q)}'><div class='tw'><table><thead><tr><th>ID</th><th>Petsa</th><th>Customer</th><th>Technician</th><th>Serbisyo</th><th>Bayad</th><th>Fee (15%)</th><th>Status</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.code)}</td><td>${dstr(x.ts)}</td><td>${esc(x.cust)}</td><td>${esc(x.tech)}</td><td>${esc(x.svc)}</td><td>${fmt(x.amt)}</td><td>${x.st == 'Natapos' ? fmt(fee(x.amt)) : '—'}</td><td><span class='pill ${x.st == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(x.st) ? 'no' : ''}'>${esc(x.st)}</span></td></tr>`).join('') || `<tr><td colspan='8' class='mute'>Walang transaction na tugma.</td></tr>`}</tbody></table></div><p class='mute'>${L.length} transaction · Kabuuang natapos: ${fmt(L.filter(x => x.st == 'Natapos').reduce((n, x) => n + x.amt, 0))}</p></div>`;
+  A.innerHTML = `<div class='panel au wide'><h2>Mga transaction</h2><div class='chips'>${S.map(s => `<button class='chip' aria-pressed='${AF.st == s}' data-s='${s}'>${s}</button>`).join('')}</div><input id='aq' placeholder='Hanapin: technician, customer, serbisyo' value='${esc(AF.q)}'><div class='tw'><table><thead><tr><th>ID</th><th>Petsa</th><th>Customer</th><th>Technician</th><th>Serbisyo</th><th>Bayad sa serbisyo</th><th>Booking fee</th><th>Fee (15%)</th><th>Status</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.code)}</td><td>${dstr(x.ts)}</td><td>${esc(x.cust)}</td><td>${esc(x.tech)}</td><td>${esc(x.svc)}</td><td>${fmt(x.amt)}</td><td>${fmt(x.booking_fee || 0)}</td><td>${x.st == 'Natapos' ? fmt(fee(x.amt)) : '—'}</td><td><span class='pill ${x.st == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(x.st) ? 'no' : ''}'>${esc(x.st)}</span></td></tr>`).join('') || `<tr><td colspan='9' class='mute'>Walang transaction na tugma.</td></tr>`}</tbody></table></div><p class='mute'>${L.length} transaction · Kabuuang natapos: ${fmt(L.filter(x => x.st == 'Natapos').reduce((n, x) => n + x.amt, 0))}</p></div>`;
   A.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { AF.st = b.dataset.s; admTx() });
   $('aq').oninput = e => { AF.q = e.target.value; admTx(); const i = $('aq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length) };
 }
 function admPr() {
-  A.innerHTML = `<div class='panel au'><h2>Presyo ng mga serbisyo</h2><p class='mute' style='margin:0 0 8px'>Base price ng bawat uri ng serbisyo.</p>${SERVICES.slice(1).map(s => `<label class='prow'><span>${s}</span><span>₱ <input type='number' min='0' step='50' inputmode='numeric' data-p='${s}' value='${PRICES[s]}' aria-label='Presyo ng ${s}'></span></label>`).join('')}<p class='mute' id='pe' role='status'></p><button class='btn' id='ps'>I-save ang presyo</button><button class='btn alt' id='pd'>Ibalik sa dating presyo</button></div>`;
-  $('ps').onclick = async () => { const n = {}; let bad = 0; A.querySelectorAll('[data-p]').forEach(i => { const v = Math.round(Number(i.value)); if (i.value === '' || !(v >= 0)) bad = 1; n[i.dataset.p] = v }); const e = $('pe'); if (bad) { e.className = 'err'; e.textContent = 'Maglagay ng tamang presyo sa bawat serbisyo.'; return } const er = await saveSetting('prices', n); if (er) { e.className = 'err'; e.textContent = 'Hindi na-save: ' + er.message; return } PRICES = n; e.className = 'mute'; e.textContent = 'Na-save na ang mga presyo.' };
+  A.innerHTML = `<div class='panel au'><h2>Presyo ng mga serbisyo</h2><p class='mute' style='margin:0 0 8px'>Base price ng bawat uri ng serbisyo.</p>${SERVICES.slice(1).map(s => `<label class='prow'><span>${s}</span><span>₱ <input type='number' min='0' step='50' inputmode='numeric' data-p='${s}' value='${PRICES[s]}' aria-label='Presyo ng ${s}'></span></label>`).join('')}<h3 style='margin:20px 0 0'>Booking fee</h3><p class='mute' style='margin:0 0 4px;font-size:13px'>Sinisingil sa customer sa bawat booking. Buo itong napupunta sa CoolFix, at hindi binabawas sa technician.</p><label class='prow'><span>Booking fee</span><span>₱ <input type='number' min='0' max='500' step='1' inputmode='numeric' id='bfee' value='${FEE}' aria-label='Booking fee'></span></label>
+<p class='mute' id='pe' role='status'></p><button class='btn' id='ps'>I-save ang presyo</button><button class='btn alt' id='pd'>Ibalik sa dating presyo</button></div>`;
+  $('ps').onclick = async () => { const n = {}; let bad = 0; A.querySelectorAll('[data-p]').forEach(i => { const v = Math.round(Number(i.value)); if (i.value === '' || !(v >= 0)) bad = 1; n[i.dataset.p] = v }); const e = $('pe'), bv = Math.round(Number($('bfee').value)); if (bad) { e.className = 'err'; e.textContent = 'Maglagay ng tamang presyo sa bawat serbisyo.'; return } if ($('bfee').value === '' || !(bv >= 0)) { e.className = 'err'; e.textContent = 'Maglagay ng tamang booking fee (0 kung wala).'; return } const er = await saveSetting('prices', n) || await saveSetting('booking_fee', bv); if (er) { e.className = 'err'; e.textContent = 'Hindi na-save: ' + er.message; return } PRICES = n; FEE = bv; e.className = 'mute'; e.textContent = 'Na-save na ang mga presyo.' };
   $('pd').onclick = async () => { PRICES = { ...DEF }; await saveSetting('prices', PRICES); admPr() };
 }
 function admTc() {
@@ -656,7 +667,7 @@ async function admDoc(id) {
   }
 }
 function admSv() {
-  if (!ED) ED = { c: cl(CAT), o: cl(OC) };
+  if (!ED) ED = { c: cl(CAT), o: cl(OC), n: [...NC2] };
   EC = Math.max(0, Math.min(EC, ED.c.length - 1)); const c = ED.c[EC], E = x => esc(String(x ?? ''));
   const num = (d, v) => `<input type="number" min="0" inputmode="numeric" data-${d} value="${v == null ? '' : v}">`;
   A.innerHTML = `<div class='panel au wide'><h2>Mga serbisyo at presyo</h2><p class='mute' style='margin:0'>I-edit ang presyo at serbisyo, o magdagdag ng bago. Pindutin ang I-save sa ibaba para lumabas ito sa customer.</p>
@@ -664,8 +675,8 @@ function admSv() {
  <label>Pangalan ng kategorya<input data-f='t' value='${E(c.t)}'></label>
  <label>Maikling paglalarawan<input data-f='d' value='${E(c.d)}'></label>
  <label>Paalala sa customer<input data-f='n' value='${E(c.n)}'></label>
- <label>Technician na pwedeng kumuha<select data-f='m'>${SERVICES.slice(1).map(s => `<option ${(c.m || c.k) == s ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
- ${c.g.map((g, gi) => `<div class='ged'><div class='grow'><input data-gn='${gi}' value='${E(g[0])}' aria-label='Pangalan ng group'><button class='chip' data-dg='${gi}'>Alisin ang group</button></div><div class='irow mute' style='margin:8px 0 0;font-size:12px'><span style='flex:3 1 160px'>Serbisyo</span><span style='flex:1 1 90px'>Presyo (₱)</span><span style='width:44px'></span></div>${g[1].map((x, xi) => `<div class='irow'><input data-i='${gi}:${xi}:0' value='${E(x[0])}' aria-label='Serbisyo'>${num(`i='${gi}:${xi}:1'`, x[1])}<button class='chip' data-dx='${gi}:${xi}' aria-label='Alisin ang serbisyo'>✕</button></div>`).join('')}<button class='chip' data-ax='${gi}'>+ Dagdag na serbisyo</button></div>`).join('')}
+ <p class='mute' style='font-size:13px;margin:10px 0 0'>I-tsek ang <b>NC II lang</b> sa mga serbisyong NC II certified na technician lang ang pwedeng tumanggap (installation at major repair).</p><label>Technician na pwedeng kumuha<select data-f='m'>${SERVICES.slice(1).map(s => `<option ${(c.m || c.k) == s ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
+ ${c.g.map((g, gi) => `<div class='ged'><div class='grow'><input data-gn='${gi}' value='${E(g[0])}' aria-label='Pangalan ng group'><button class='chip' data-dg='${gi}'>Alisin ang group</button></div><div class='irow mute' style='margin:8px 0 0;font-size:12px'><span style='flex:3 1 160px'>Serbisyo</span><span style='flex:1 1 90px'>Presyo (₱)</span><span style='width:44px'></span></div>${g[1].map((x, xi) => `<div class='irow'><input data-i='${gi}:${xi}:0' value='${E(x[0])}' aria-label='Serbisyo'>${num(`i='${gi}:${xi}:1'`, x[1])}<label class='ck nck' title='NC II holder lang ang pwedeng tumanggap'><input type='checkbox' data-nc='${E(x[0])}' ${ED.n.includes(x[0]) ? 'checked' : ''}> NC II lang</label><button class='chip' data-dx='${gi}:${xi}' aria-label='Alisin ang serbisyo'>✕</button></div>`).join('')}<button class='chip' data-ax='${gi}'>+ Dagdag na serbisyo</button></div>`).join('')}
  <button class='btn alt' id='ag'>+ Dagdag na group</button><button class='btn alt' id='dcat'>Alisin ang kategoryang ito</button>
  <h3 style='margin:22px 0 0'>Iba pang singil</h3><p class='mute' style='margin:0;font-size:13px'>Ang may tsek sa Awtomatiko ay laging kasama sa tinatayang bayad. Ang iba ay pipiliin ng customer.</p>
  ${ED.o.map((o, i) => `<div class='irow'><input data-o='${i}:n' value='${E(o.n)}' aria-label='Pangalan ng singil'><select data-o='${i}:k' aria-label='Uri'><option value='fixed' ${o.k == 'fixed' ? 'selected' : ''}>Fixed (₱)</option><option value='pct' ${o.k == 'pct' ? 'selected' : ''}>Porsyento (%)</option><option value='custom' ${o.k == 'custom' ? 'selected' : ''}>Custom quotation</option></select>${num(`o='${i}:p'`, o.p)}<label class='ck' style='border:0;padding:0'><input type='checkbox' data-o='${i}:a' ${o.a ? 'checked' : ''}> Awtomatiko</label><button class='chip' data-do='${i}' aria-label='Alisin ang singil'>✕</button></div>`).join('')}
@@ -677,6 +688,7 @@ function admSv() {
   q('[data-i]').forEach(i => i.oninput = () => { const [a, b, f] = i.dataset.i.split(':').map(Number); c.g[a][1][b][f] = f ? (i.value === '' ? '' : Number(i.value)) : i.value });
   q('[data-o]').forEach(i => { const h = () => { const [n, f] = i.dataset.o.split(':'), o = ED.o[n]; o[f] = f == 'a' ? i.checked : f == 'p' ? (i.value === '' ? '' : Number(i.value)) : i.value }; i.oninput = h; i.onchange = h });
   q('[data-ec]').forEach(b => b.onclick = () => { EC = +b.dataset.ec; re() });
+  q('[data-nc]').forEach(i => i.onchange = () => { const v = i.dataset.nc; ED.n = ED.n.filter(x => x != v); if (i.checked) ED.n.push(v) });
   $('acat').onclick = () => { ED.c.push({ k: 'c' + Date.now(), t: 'Bagong kategorya', d: '', n: '', m: 'Aircon repair', g: [['Bagong group', [['Bagong serbisyo', 500]]]] }); EC = ED.c.length - 1; re() };
   q('[data-dg]').forEach(b => b.onclick = () => { c.g.splice(+b.dataset.dg, 1); re() });
   q('[data-dx]').forEach(b => b.onclick = () => { const [a, x] = b.dataset.dx.split(':').map(Number); c.g[a][1].splice(x, 1); re() });
@@ -691,9 +703,10 @@ function admSv() {
     ED.c.forEach(k => { if (!k.t.trim()) m = m || 'Lagyan ng pangalan ang bawat kategorya.'; if (!k.g.length) m = m || `Walang group ang ${k.t || 'kategorya'}.`; k.g.forEach(g => { if (!g[0].trim()) m = m || `Lagyan ng pangalan ang group sa ${k.t}.`; if (!g[1].length) m = m || `Walang serbisyo ang group na ${g[0]}.`; g[1].forEach(x => { if (!String(x[0]).trim()) m = m || `May serbisyong walang pangalan sa ${k.t}.`; if (bad(x[1])) m = m || `Maglagay ng tamang presyo sa ${x[0]}.` }) }) });
     ED.o.forEach(o => { if (!o.n.trim()) m = m || 'Lagyan ng pangalan ang bawat singil.'; if (o.k == 'fixed') { if (bad(o.p)) m = m || `Ayusin ang presyo ng ${o.n}.` } else if (o.k == 'pct' && (bad(o.p) || o.p > 100)) m = m || `Maglagay ng % (0 hanggang 100) sa ${o.n}.` });
     if (m) { e.textContent = m; return }
-    const e1 = await saveSetting('catalog', ED.c), e2 = await saveSetting('other_charges', ED.o);
-    if (e1 || e2) { e.textContent = 'Hindi na-save: ' + (e1 || e2).message; return }
-    CAT = cl(ED.c); OC = cl(ED.o); cat = null; item = null; ED = null; admSv(); const e3 = $('se'); e3.className = 'mute'; e3.textContent = 'Na-save! Makikita na ito ng mga customer.';
+    const names = new Set(ED.c.flatMap(k => k.g.flatMap(g => g[1].map(x => x[0])))), nl = ED.n.filter(x => names.has(x));
+    const e1 = await saveSetting('catalog', ED.c), e2 = await saveSetting('other_charges', ED.o), e4 = await saveSetting('nc2_only', nl);
+    if (e1 || e2 || e4) { e.textContent = 'Hindi na-save: ' + (e1 || e2 || e4).message; return }
+    CAT = cl(ED.c); OC = cl(ED.o); NC2 = nl; cat = null; item = null; ED = null; admSv(); const e3 = $('se'); e3.className = 'mute'; e3.textContent = 'Na-save! Makikita na ito ng mga customer.';
   };
 }
 
