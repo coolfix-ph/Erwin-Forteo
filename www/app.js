@@ -722,7 +722,7 @@ function techCal(J) {
 }
 let locTry = false;
 function techDash() {
-  if (USER.online && USER.lat == null && !locTry) { locTry = true; getLoc().then(p => { if (p) sb.from("profiles").update({ lat: p.lat, lng: p.lng }).eq("id", USER.id).select().single().then(({ data }) => { if (data) USER = { ...USER, ...data } }) }) }
+  if (USER.online && USER.lat == null && !locTry) { locTry = true; getLoc().then(p => { if (p) sb.from("profiles").update({ lat: p.lat, lng: p.lng }).eq("id", USER.id).select(PUB).single().then(({ data }) => { if (data) USER = { ...USER, ...data } }) }) }
   VIEW = "dash"; const u = USER, J = myJobs();
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const done = J.filter(x => x.st == 'Natapos'), earn = done.filter(x => new Date(x.updated_at) >= today).reduce((n, x) => n + gross(x) - comm(x), 0);
