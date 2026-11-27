@@ -177,6 +177,18 @@ async function loadConvs() {
 }
 async function loadProfiles() { const { data } = await sb.rpc("admin_profiles"); PROFILES = data || [] }
 
+// Bantay kung sakaling hindi dumating ang realtime: i-reload ang mga online na technician kada 30 segundo at pagbalik sa app.
+let pollT = null;
+async function reTechs() {
+  if (!USER || USER.role != 'customer' || document.hidden) return;
+  const before = TECHS.map(t => t.id + (t.online ? 1 : 0) + ':' + t.lat).sort().join();
+  const keep = TECHS; await loadTechs();
+  TECHS = TECHS.map(t => { const o = keep.find(x => x.id == t.id); return o && o.lat == t.lat && o.lng == t.lng ? Object.assign(o, t, { x: o.x, y: o.y }) : t });
+  if (TRACK) { const tt = keep.find(x => x.id == TRACK.tech_id); if (tt && !TECHS.includes(tt)) TECHS.push(tt) }
+  if (TECHS.map(t => t.id + (t.online ? 1 : 0) + ':' + t.lat).sort().join() != before && VIEW == "home") home();
+}
+function techPoll() { clearInterval(pollT); if (USER.role == 'customer') pollT = setInterval(reTechs, 30000) }
+document.addEventListener("visibilitychange", () => { if (!document.hidden) reTechs() });
 function subscribe() {
   if (channel) sb.removeChannel(channel);
   channel = sb.channel("coolfix-" + USER.id)
@@ -334,7 +346,7 @@ async function start(session) {
 async function enter() {
   const u = USER; err = "";
   $("who").textContent = first(u.name) + " · " + (u.role == "customer" ? "Customer" : u.role == "admin" ? "Admin" : "Technician"); $("lo").hidden = false;
-  subscribe(); document.body.classList.toggle('adm', u.role == 'admin'); document.documentElement.style.background = u.role == 'admin' ? '#091233' : '';
+  subscribe(); techPoll(); document.body.classList.toggle('adm', u.role == 'admin'); document.documentElement.style.background = u.role == 'admin' ? '#091233' : '';
   TAB = u.role == "customer" ? "find" : u.role == "admin" ? "ov" : "dash"; CUR = null;
   if (u.role == "customer") {
     await Promise.all([loadTechs(), loadStats()]); show(); initGM();
@@ -447,8 +459,11 @@ let CART = [];
 const cartN = () => CART.reduce((n, x) => n + x.q, 0), cartSum = () => CART.reduce((n, x) => n + x.p * x.q, 0);
 const cartNC2 = () => CART.some(isNC2);
 const needTags = () => [...new Set(CART.length ? CART.map(x => x.m) : cat ? [cat.m || cat.k] : [])];
-const canDo = (t, tag) => (SVM[tag] || [tag]).some(x => t.s.includes(x));
-function list() { const nc = cartNC2(), tags = needTags(); return TECHS.filter(t => t.online && (!nc || certified(t)) && tags.every(g => canDo(t, g))).sort((a, b) => dist(a) - dist(b)) }
+// Kapag walang napiling serbisyo ang technician (hal. nag-sign up gamit ang Google), ituring na kaya niya lahat.
+const canDo = (t, tag) => { const have = t.s.map(x => String(x).toLowerCase().trim()); return !have.length || (SVM[tag] || [tag]).some(x => have.includes(x.toLowerCase())) };
+const hasLoc = t => t.lat != null && t.lng != null;
+const kmTxt = t => hasLoc(t) ? `${dist(t).toFixed(1)} km<small>~${eta(t)} min</small>` : `<small>Hindi pa alam<br>ang lokasyon</small>`;
+function list() { const nc = cartNC2(), tags = needTags(); return TECHS.filter(t => t.online && (!nc || certified(t)) && tags.every(g => canDo(t, g))).sort((a, b) => (hasLoc(a) ? 0 : 1) - (hasLoc(b) ? 0 : 1) || dist(a) - dist(b)) }
 function cartAdd(c, x) { const i = CART.findIndex(y => y.c == c.k && y.n == x[0]); if (i >= 0) CART[i].q++; else CART.push({ c: c.k, t: c.t, m: c.m || c.k, n: x[0], p: x[1], q: 1 }) }
 const cartLine = x => `${x.t}: ${x.n}${x.q > 1 ? ' ×' + x.q : ''}`;
 function cartBox(editable) {
@@ -470,7 +485,7 @@ function home() {
   if (GL) gClear(); $("route").innerHTML = ""; sel = null;
   pins();
   const L = list(), act = myBookings().filter(x => ACTIVE.includes(x.st)), unr = myBookings().find(x => x.st == 'Natapos' && !x.rating && Date.now() - tms(x.done_at || x.updated_at) < 7 * 864e5), inCart = (c, x) => CART.find(y => y.c == c.k && y.n == x[0]);
-  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}"><div class="av">${esc(ini(t.n))}</div><div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}${stars(t.id)}<small>${esc(t.s.join(', '))}</small></div><div class="km">${dist(t).toFixed(1)} km<small>~${eta(t)} min</small><span class="bkp">I-book</span></div></button>`).join("") || `<p class="mute">Wala pang online na technician na kaya ${CART.length > 1 ? 'lahat ng nasa cart mo' : 'ang serbisyong ito'}. ${CART.length > 1 ? 'Subukang hatiin sa dalawang booking, o ' : ''}subukan ulit mamaya.</p>`;
+  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}"><div class="av">${esc(ini(t.n))}</div><div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}${stars(t.id)}<small>${esc(t.s.join(', '))}</small></div><div class="km">${kmTxt(t)}<span class="bkp">I-book</span></div></button>`).join("") || `<p class="mute">Wala pang online na technician na kaya ${CART.length > 1 ? 'lahat ng nasa cart mo' : 'ang serbisyong ito'}. ${CART.length > 1 ? 'Subukang hatiin sa dalawang booking, o ' : ''}subukan ulit mamaya.</p>`;
   const hd = `<div class='hello'><b>Kumusta, ${esc(first(USER.name))}!</b><span>${TECHS.filter(t => t.online).length} technician ang online ngayon</span></div><div class='stats' id='hstats'>${statsHtml()}</div>${act.length ? `<p class="note">May aktibo kang booking. <button class="chip" id="ab">Tingnan</button></p>` : unr ? `<p class="note">Paano ang serbisyo ni ${esc(first(unr.tech_name))}? <button class="chip" id="rtb">I-rate</button></p>` : ""}`;
   let body;
   if (!cat) body = `<h2>${CART.length ? 'Magdagdag pa ng serbisyo' : 'Anong serbisyo ang kailangan mo?'}</h2><div class="cats">${CAT.map((c, i) => `<button class="cat" data-c="${i}"><b>${esc(c.t)}</b><small>${esc(c.d)}</small></button>`).join("")}</div><p class="mute" style="font-size:13px">Pwedeng magdagdag ng ilang serbisyo sa iisang booking. Tingnan ang <b>Rate guide</b> para sa lahat ng presyo.</p>`;
@@ -528,7 +543,7 @@ function pick(t) {
   if (!CART.length) { sel = t; pins(); $("panel").insertAdjacentHTML("afterbegin", `<p class="note">Magdagdag muna ng serbisyo sa cart bago mag-book kay ${esc(first(t.n))}.</p>`); return }
   VIEW = "pick"; sel = t; pins();
   const au = OC.filter(o => o.a), opt = OC.map((o, i) => o.a ? '' : `<label class="ck"><input type="checkbox" data-oc="${i}"> ${esc(o.n)} <small>${ocs(o)}</small></label>`).join("");
-  $("panel").innerHTML = `<h2>${esc(t.n)}</h2>${certified(t) ? CERT : ''}${stars(t.id)}<p class="mute" style="margin:0">${esc(t.s.join(', '))} · ${dist(t).toFixed(1)} km ang layo</p>
+  $("panel").innerHTML = `<h2>${esc(t.n)}</h2>${certified(t) ? CERT : ''}${stars(t.id)}<p class="mute" style="margin:0">${esc(t.s.join(', '))} · ${hasLoc(t) ? dist(t).toFixed(1) + ' km ang layo' : 'hindi pa alam ang eksaktong lokasyon'}</p>
  ${cartBox(false)}
  ${opt ? `<p class="gh">Dagdag na singil (kung kailangan)</p>${opt}` : ''}
  <label class="mute" style="display:block;margin-top:10px">Address<input id="ad" value="${esc(USER.addr || '')}" placeholder="Bahay/Unit, Kalye, Brgy., Lungsod"></label>${LF || GM ? `<button class="chip adb" id="adm" type="button"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 22c-5-6.5-8-10.5-8-14a8 8 0 0 1 16 0c0 3.5-3 7.5-8 14z" fill="currentColor"/><circle cx="12" cy="8" r="3" fill="var(--panel)"/></svg>Piliin sa mapa ang eksaktong lugar</button>` : ''}
@@ -705,7 +720,9 @@ function techCal(J) {
   return `<div class="jb calbox" id="tcal"><b>Kalendaryo ng schedule</b><p class="mute" style="margin:2px 0 8px;font-size:13px">${ahead ? `${ahead} naka-schedule na booking sa susunod na ${DAYS} araw. I-tap ang petsa para makita.` : `Wala pang naka-schedule na booking sa susunod na ${DAYS} araw.`}</p>${calGrid(TD, d => ({ n: cnt[dkey(d)] || 0 }))}
   <p class="gh">${esc(dlabel(kdate(TD)))}</p>${L.length ? L.map(b => `<button type="button" class="ag" data-job="${b.id}"><span class="agt">${tlabel(b.sched_at)}</span><span class="agd"><b>${esc(b.svc)}</b><small>${esc(b.cust_name)} · ${esc(b.address)}</small></span><span class="pill">${esc(b.st)}</span></button>`).join('') : `<p class="mute" style="margin:0;font-size:14px">Walang naka-schedule sa araw na ito.</p>`}</div>`;
 }
+let locTry = false;
 function techDash() {
+  if (USER.online && USER.lat == null && !locTry) { locTry = true; getLoc().then(p => { if (p) sb.from("profiles").update({ lat: p.lat, lng: p.lng }).eq("id", USER.id).select().single().then(({ data }) => { if (data) USER = { ...USER, ...data } }) }) }
   VIEW = "dash"; const u = USER, J = myJobs();
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const done = J.filter(x => x.st == 'Natapos'), earn = done.filter(x => new Date(x.updated_at) >= today).reduce((n, x) => n + gross(x) - comm(x), 0);
