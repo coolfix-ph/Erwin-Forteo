@@ -32,6 +32,8 @@ function wadd(t,kind,amt,note){let w=DB.wallets.find(x=>x.tech_id==t);if(!w){w={
 const bk=id=>DB.bookings.find(x=>x.id==id);
 const upd=b=>{b.updated_at=now();emit('bookings','UPDATE',JSON.parse(JSON.stringify(b)))};
 const RPC={
+ my_profile:()=>{const p=DB.profiles.find(x=>x.id==uid);return p?{...p}:null},
+ admin_profiles:()=>DB.profiles.map(x=>({...x})),
  tech_busy:a=>DB.bookings.filter(x=>x.tech_id==a.t&&x.sched_at&&ACT.includes(x.status)).map(x=>x.sched_at),
  tech_stats:()=>{const m={};DB.bookings.filter(b=>b.status=='Natapos').forEach(b=>{const o=m[b.tech_id]=m[b.tech_id]||{tech_id:b.tech_id,s:0,reviews:0,done:0};o.done++;if(b.rating){o.s+=b.rating;o.reviews++}});return Object.values(m).map(o=>({...o,rating:o.reviews?Math.round(o.s/o.reviews*10)/10:null}))},
  send_quote:a=>{const b=bk(a.bid);if(b.status!='Dumating na')throw 'Pwede lang mag-quote pagdating sa customer';Object.assign(b,{q_amt:a.amount,q_note:a.why,q_status:'hinihintay'});upd(b)},

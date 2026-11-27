@@ -2,6 +2,8 @@
 const CFG = window.COOLFIX_CONFIG || {};
 const $ = id => document.getElementById(id);
 const A = $("auth");
+// Mga column ng profile na nakikita ng ibang user. Ang phone, email at dokumento ay sa may-ari at admin lang (my_profile / admin_profiles).
+const PUB = "id,role,name,services,online,lat,lng,addr,cert_type,doc_status,google,created_at";
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = n => "₱" + Number(n || 0).toLocaleString("en-PH");
 // Komisyon ng CoolFix: % ng bayad sa serbisyo (hindi kasama ang booking fee). Galing sa settings (commission_pct).
@@ -93,9 +95,9 @@ async function uploadDocs(ct, files) {
     if (error) return 'Hindi na-upload ang ' + DOCS[k] + ': ' + error.message;
     docs[k] = { path, name: f.name || k, type: f.type, at: new Date().toISOString() };
   }
-  const { data, error } = await sb.from('profiles').update({ cert_type: ct, docs, doc_status: 'sinusuri' }).eq('id', USER.id).select().single();
+  const { data, error } = await sb.from('profiles').update({ cert_type: ct, docs, doc_status: 'sinusuri' }).eq('id', USER.id).select(PUB).single();
   if (error) return 'Hindi na-save ang dokumento: ' + error.message;
-  USER = data; return '';
+  USER = { ...USER, cert_type: ct, docs, ...data }; return '';
 }
 // Habang hinihintay ang email confirmation, itinatabi ang mga file sa device (IndexedDB) at ina-upload sa unang log in.
 const idb = (mode, fn) => new Promise(res => { try { const r = indexedDB.open('coolfix', 1); r.onupgradeneeded = () => r.result.createObjectStore('docs'); r.onsuccess = () => { const tx = r.result.transaction('docs', mode), q = fn(tx.objectStore('docs')); tx.oncomplete = () => res(q.result); tx.onerror = () => res(null) }; r.onerror = () => res(null) } catch (e) { res(null) } });
@@ -173,7 +175,7 @@ async function loadConvs() {
   if (ids.length) { const r = await sb.from("messages").select("*").in("conv_id", ids).order("created_at"); ms = r.data || [] }
   CONVS = (cs || []).map(c => ({ ...c, m: ms.filter(m => m.conv_id == c.id).map(m => ({ id: m.id, f: m.sender, t: m.body, ts: new Date(m.created_at).getTime() })) }));
 }
-async function loadProfiles() { const { data } = await sb.from("profiles").select("*"); PROFILES = data || [] }
+async function loadProfiles() { const { data } = await sb.rpc("admin_profiles"); PROFILES = data || [] }
 
 function subscribe() {
   if (channel) sb.removeChannel(channel);
@@ -186,7 +188,7 @@ function subscribe() {
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, p => {
       const r = p.new; if (!r) return;
-      if (USER.role == "admin") { const k = PROFILES.findIndex(x => x.id == r.id); if (k >= 0) PROFILES[k] = r; else PROFILES.push(r); if ((VIEW == "admin" && ["ov", "tt"].includes(TAB)) || VIEW == "rq") adminView() }
+      if (USER.role == "admin") { const k = PROFILES.findIndex(x => x.id == r.id); if (k >= 0) PROFILES[k] = { ...PROFILES[k], ...r }; else PROFILES.push(r); if ((VIEW == "admin" && ["ov", "tt"].includes(TAB)) || VIEW == "rq") adminView() }
       if (r.id == USER.id) { const was = USER.doc_status; USER = { ...USER, ...r }; if (VIEW == "dash" && was != r.doc_status) techDash(); return }
       if (r.role != "technician") return;
       const i = TECHS.findIndex(t => t.id == r.id);
@@ -305,8 +307,8 @@ async function applyPending(p) {
   if (!pend || Date.now() - pend.at > 15 * 60e3 || Date.now() - new Date(p.created_at).getTime() > 15 * 60e3) return p;
   const upd = { addr: pend.addr || p.addr };
   if (pend.role == "technician" && p.role == "customer") { upd.role = "technician"; upd.services = pend.services }
-  const { data } = await sb.from("profiles").update(upd).eq("id", p.id).select().single();
-  return data || p;
+  const { data } = await sb.from("profiles").update(upd).eq("id", p.id).select(PUB).single();
+  return data ? { ...p, ...data } : p;
 }
 
 let starting = false;
@@ -315,7 +317,7 @@ async function start(session) {
   starting = true;
   try {
     A.innerHTML = `<div class="panel au"><p class="mute">Naglo-load…</p></div>`;
-    let { data: p, error } = await sb.from("profiles").select("*").eq("id", session.user.id).single();
+    let { data: p, error } = await sb.rpc("my_profile"); if (Array.isArray(p)) p = p[0];
     if (error || !p) { console.error("profile load", error); await sb.auth.signOut(); err = "Hindi ma-load ang account mo" + (error ? " (" + (error.code || "") + " " + error.message + ")" : " (walang profile)") + ". Subukan ulit o sabihan ang admin."; return authView() }
     if (p.google) p = await applyPending(p);
     USER = p;
@@ -739,9 +741,9 @@ function techDash() {
     busy("ol", true);
     const upd = { online: !u.online };
     if (upd.online) { const sm = $("ol").querySelector("small"); if (sm) sm.textContent = "Kinukuha ang lokasyon mo…"; const p = await getLoc(); if (p) { upd.lat = p.lat; upd.lng = p.lng } else $("de").textContent = "Hindi makuha ang lokasyon mo. Payagan ang location para mas tama ang layo na makikita ng customer." }
-    const { data, error } = await sb.from("profiles").update(upd).eq("id", u.id).select().single();
+    const { data, error } = await sb.from("profiles").update(upd).eq("id", u.id).select(PUB).single();
     if (error) { busy("ol", false); $("de").textContent = "Hindi na-update: " + error.message; return }
-    USER = data; techDash();
+    USER = { ...USER, ...data }; techDash();
   };
   A.querySelectorAll("[data-gowl]").forEach(b => b.onclick = () => { TAB = 'wl'; show() });
   A.querySelectorAll("[data-q]").forEach(b => b.onclick = async () => {
@@ -1078,9 +1080,9 @@ async function admDoc(id) {
   const set = async st => {
     const n = $('dn').value.trim(); if (st == 'tinanggihan' && !n) { $('dre').textContent = 'Ilagay kung bakit tinanggihan, para alam ng technician ang aayusin.'; return }
     busy('dok', true); busy('dno', true);
-    const { data, error } = await sb.from('profiles').update({ doc_status: st, doc_note: st == 'tinanggihan' ? n : '' }).eq('id', id).select().single();
+    const { data, error } = await sb.from('profiles').update({ doc_status: st, doc_note: st == 'tinanggihan' ? n : '' }).eq('id', id).select(PUB).single();
     if (error) { busy('dok', false); busy('dno', false); $('dre').textContent = 'Hindi na-save: ' + error.message; return }
-    const i = PROFILES.findIndex(p => p.id == id); if (i >= 0) PROFILES[i] = data; adminView();
+    const i = PROFILES.findIndex(p => p.id == id); if (i >= 0) PROFILES[i] = { ...PROFILES[i], doc_note: st == 'tinanggihan' ? n : '', ...data }; adminView();
   };
   $('dok').onclick = () => set('aprubado'); $('dno').onclick = () => set('tinanggihan');
   fillTiles('doc');
