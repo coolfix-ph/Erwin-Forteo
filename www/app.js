@@ -1205,6 +1205,8 @@ async function techMap(b) {
 let GL = false, gmap, gme, gmk = [], gRt = [], GT = 0;
 // Marker bilang SVG (walang ibang file na kailangang i-load).
 const svgPin = (px, c, txt, ring) => { const r = px / 2, v = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}">${ring ? `<circle cx="${r}" cy="${r}" r="${r}" fill="${c}" fill-opacity=".25"/>` : ''}<circle cx="${r}" cy="${r}" r="${ring ? r * .45 : r - 1.5}" fill="${c}" stroke="#fff" stroke-width="${ring ? 3 : 2.5}"/>${txt ? `<text x="${r}" y="${r}" dy=".35em" text-anchor="middle" font-family="Arial,sans-serif" font-weight="700" font-size="${px * .42}" fill="#fff">${txt.replace(/[<&]/g, '')}</text>` : ''}</svg>`; return { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(v), scaledSize: new google.maps.Size(px, px), anchor: new google.maps.Point(r, r) } };
+// Marker ng technician: logo ng CoolFix sa loob ng pin. big = napili o sinusundan.
+const techIcon = big => { const w = big ? 50 : 40, h = Math.round(w * 116 / 96); return { url: 'img/tech-pin.png', scaledSize: new google.maps.Size(w, h), anchor: new google.maps.Point(w / 2, h - 2) } };
 window.gm_authFailure = () => { GL = false; $('gm').hidden = true; $('svg').style.display = ''; pins() };
 function loadGM() { return new Promise(r => { if (!GM) return r(false); if (window.google?.maps) return r(true); window.__gm = () => r(true); const s = document.createElement('script'); s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(CFG.mapsKey) + '&callback=__gm&loading=async'; s.onerror = () => r(false); document.head.appendChild(s) }) }
 async function initGM() {
@@ -1220,7 +1222,7 @@ function gpins() {
   if (LF) return lpins();
   gmk.forEach(m => m.setMap(null)); gmk = [];
   const b = new google.maps.LatLngBounds(C);
-  list().forEach(t => { const p = tpos(t); b.extend(p); const m = new google.maps.Marker({ position: p, map: gmap, title: t.n, icon: svgPin(sel === t ? 38 : 30, '#14378F', ini(t.n)[0]), zIndex: 2 }); m.addListener('click', () => pick(t)); gmk.push(m) });
+  list().forEach(t => { const p = tpos(t); b.extend(p); const m = new google.maps.Marker({ position: p, map: gmap, title: t.n, icon: techIcon(sel === t), zIndex: sel === t ? 3 : 2 }); m.addListener('click', () => pick(t)); gmk.push(m) });
   if (sel) gmap.panTo(tpos(sel)); else gmap.fitBounds(b, 40);
 }
 function gClear() { GT++; if (LF) { lrt.forEach(x => x.remove()); lrt = []; return } gRt.forEach(x => x.setMap(null)); gRt = [] }
@@ -1229,7 +1231,7 @@ async function gtrack(t, b) {
   if (LF) return ltrack(t, b);
   gClear(); const tk = GT; gmk.forEach(m => m.setMap(null));
   const o = tpos(t), d = C;
-  const mv = new google.maps.Marker({ position: o, map: gmap, title: t.n, icon: svgPin(36, '#14378F', ini(t.n)[0]), zIndex: 2 }); gRt.push(mv);
+  const mv = new google.maps.Marker({ position: o, map: gmap, title: t.n, icon: techIcon(true), zIndex: 2 }); gRt.push(mv);
   if (!ACTIVE.includes(b.st)) return;
   const r = await gRoute(o, d); if (tk != GT) return;
   const path = r ? r.path : [o, d];
@@ -1245,6 +1247,7 @@ const LF = !GM && !!window.L;
 const OSM_T = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', OSM_A = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
 const NOM = 'https://nominatim.openstreetmap.org/';
 let lmap, lme, lmk = [], lrt = [];
+const ltech = big => { const w = big ? 50 : 40, h = Math.round(w * 116 / 96); return window.L.icon({ iconUrl: 'img/tech-pin.png', iconSize: [w, h], iconAnchor: [w / 2, h - 2] }) };
 const ldot = (txt, px) => window.L.divIcon({ className: 'ldot', html: `<span>${esc(txt)}</span>`, iconSize: [px, px] });
 const osm = (el, z, zc = true) => { const m = window.L.map(el, { zoomControl: zc }).setView(C, z); window.L.tileLayer(OSM_T, { maxZoom: 19, attribution: OSM_A }).addTo(m); return m };
 function initLM() {
@@ -1257,13 +1260,13 @@ function initLM() {
 function lpins() {
   lmap.invalidateSize(); lmk.forEach(m => m.remove()); lmk = [];
   const pts = [[C.lat, C.lng]];
-  list().forEach(t => { const p = tpos(t); pts.push([p.lat, p.lng]); const m = window.L.marker(p, { icon: ldot(ini(t.n)[0], sel === t ? 34 : 26), title: t.n, keyboard: true }).addTo(lmap); m.on('click', () => pick(t)); lmk.push(m) });
+  list().forEach(t => { const p = tpos(t); pts.push([p.lat, p.lng]); const m = window.L.marker(p, { icon: ltech(sel === t), title: t.n, keyboard: true }).addTo(lmap); m.on('click', () => pick(t)); lmk.push(m) });
   if (sel) lmap.panTo(tpos(sel)); else if (pts.length > 1) lmap.fitBounds(pts, { padding: [40, 40], maxZoom: 16 }); else lmap.setView(C, 15);
 }
 function ltrack(t, b) {
   gClear(); lmap.invalidateSize(); lmk.forEach(m => m.remove()); lmk = [];
   const o = tpos(t);
-  lrt.push(window.L.marker(o, { icon: ldot(ini(t.n)[0], 32), title: t.n }).addTo(lmap));
+  lrt.push(window.L.marker(o, { icon: ltech(true), title: t.n }).addTo(lmap));
   if (!ACTIVE.includes(b.st)) return lmap.setView(o, 16);
   lrt.push(window.L.polyline([o, C], { color: '#2F7FE0', weight: 5, opacity: .85, dashArray: '8 8' }).addTo(lmap));
   lmap.fitBounds([[o.lat, o.lng], [C.lat, C.lng]], { padding: [50, 50], maxZoom: 17 });
