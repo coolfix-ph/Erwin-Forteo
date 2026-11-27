@@ -1,10 +1,8 @@
-// Kopyahin ito bilang config.js at ilagay ang mga value mula sa
-// Supabase Dashboard > Project Settings > API.
-// Ligtas na public ang "anon" key (protektado ng Row Level Security).
-// HUWAG kailanman ilagay dito ang "service_role" key.
+// CoolFix settings. Ligtas itong i-publish: ang anon key ay pampubliko,
+// at ang data ay protektado ng Row Level Security sa Supabase.
 window.COOLFIX_CONFIG = {
-  supabaseUrl: "https://YOUR-PROJECT.supabase.co",
-  supabaseAnonKey: "YOUR-ANON-KEY",
-  googleLogin: false, // gawing true kapag na-set up na ang Google provider sa Supabase
-  mapsKey: ""         // opsyonal: Google Maps JavaScript API key
+  supabaseUrl: "https://kgjaxvggvowkczhnpgqh.supabase.co",
+  supabaseAnonKey: "sb_publishable_XBGGd8qNw3t-40t3CyNxBA_DJ7SBBP-",
+  googleLogin: false,     // gawing true kapag naka-on na ang Google provider sa Supabase
+  mapsKey: ""             // opsyonal: Google Maps JavaScript API key
 };

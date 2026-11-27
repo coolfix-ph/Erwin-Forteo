@@ -27,7 +27,7 @@ Aircon at ref technician app: hanapin ang malapit na technician, mag-book, i-tra
 Awtomatikong nade-deploy ang `www/` sa GitHub Pages tuwing may push sa `main` (`.github/workflows/pages.yml`).
 Sa GitHub repo, pumunta sa **Settings → Pages → Source: GitHub Actions**.
 
-**Sariling domain:** Sa **Settings → Pages → Custom domain**, ilagay ang domain mo, halimbawa `coolfix.ph`. Sa DNS ng domain provider mo, gumawa ng:
+**Sariling domain:** Sa **Settings → Pages → Custom domain**, ilagay ang `coollfix.com`. Sa DNS ng domain provider mo, gumawa ng:
 - `CNAME` record para sa `www` na nakaturo sa `<username>.github.io`
 - `A` records para sa root domain: `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153`
 
