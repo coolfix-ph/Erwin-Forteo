@@ -1,4 +1,7 @@
 // CoolFix app — Supabase version
+// © 2026 CoolFix. All rights reserved. Bawal kopyahin, gamitin o ipamahagi nang walang pahintulot.
+// Proteksyon laban sa clickjacking: huwag payagang i-embed ang CoolFix sa iframe ng ibang site.
+if (window.top !== window.self) { try { window.top.location.replace(window.self.location.href) } catch (e) { document.documentElement.style.display = "none" } }
 const CFG = window.COOLFIX_CONFIG || {};
 const $ = id => document.getElementById(id);
 const A = $("auth");
