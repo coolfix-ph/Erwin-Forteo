@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fil">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="CoolFix: aircon at ref technician na malapit sa'yo. Mag-book, i-track at makipag-chat sa technician.">
+<meta name="theme-color" content="#14378F">
+<link rel="icon" type="image/png" href="img/favicon.png">
+<link rel="apple-touch-icon" href="img/logo.png">
+<title>CoolFix – Aircon at Ref Technician Malapit Sa'yo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><img id="hl" class="logo" alt="Logo ng CoolFix" width="44" height="44"><h1><i class="c">Cool</i><i class="f">Fix</i></h1><span>Aircon at ref technician, malapit sa'yo</span><span id="who" style="margin-left:auto;color:var(--ink);font-weight:600"></span><button class="chip" id="lo" hidden>Mag-log out</button></header>
+<nav id="tabs" class="tabs" hidden aria-label="Menu"></nav>
+<div id="auth"></div>
+<main id="app" hidden>
+<div class="map" aria-label="Mapa ng mga technician">
+<div id="gm" hidden style="position:absolute;inset:0"></div>
+<svg viewBox="0 0 100 100" id="svg">
+<rect width="100" height="100" fill="var(--block)"/>
+<rect x="60" y="8" width="26" height="20" rx="2" fill="var(--park)"/>
+<rect x="6" y="64" width="18" height="16" rx="2" fill="var(--park)"/>
+<g stroke="var(--road)" stroke-width="3.2" stroke-linecap="square">
+<path d="M0 20H100M0 50H100M0 80H100M20 0V100M50 0V100M80 0V100"/></g>
+<g stroke="var(--road)" stroke-width="1.4"><path d="M0 35H100M0 65H100M35 0V100M65 0V100"/></g>
+<g id="route"></g><g id="pins"></g>
+<g id="me"><circle cx="50" cy="50" r="8" fill="var(--blue)" opacity=".5" style="animation:pulse 2s infinite"/>
+<circle cx="50" cy="50" r="3.4" fill="var(--blue)" stroke="#fff" stroke-width="1.2"/></g>
+<text x="50" y="58" text-anchor="middle" font-size="3.2" font-weight="700" fill="var(--ink)">Ikaw</text>
+</svg>
+</div>
+<section class="panel" id="panel" aria-live="polite"></section>
+</main>
+<script src="vendor/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

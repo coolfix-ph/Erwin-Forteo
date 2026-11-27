@@ -1,0 +1,7 @@
+{
+  "appId": "ph.coolfix.app",
+  "appName": "CoolFix",
+  "webDir": "www",
+  "android": { "allowMixedContent": false },
+  "plugins": {}
+}

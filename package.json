@@ -1,0 +1,26 @@
+{
+  "name": "coolfix",
+  "version": "1.0.0",
+  "description": "CoolFix: aircon at ref technician app",
+  "scripts": {
+    "vendor": "mkdir -p www/vendor && cp node_modules/@supabase/supabase-js/dist/umd/supabase.js www/vendor/",
+    "sync": "npm run vendor && npx cap sync",
+    "serve": "npx --yes http-server www -p 8080 -c-1",
+    "test": "node tests/e2e.js",
+    "android": "npm run sync && npx cap open android",
+    "ios": "npm run sync && npx cap open ios"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@capacitor/android": "^8.6.3",
+    "@capacitor/core": "^8.6.3",
+    "@capacitor/ios": "^8.6.3",
+    "@supabase/supabase-js": "^2.119.2"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^4.0.0",
+    "@capacitor/cli": "^8.6.3"
+  },
+  "private": true
+}
