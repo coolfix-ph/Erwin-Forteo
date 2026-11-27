@@ -13,11 +13,20 @@ const CORS = {
 const out = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "content-type": "application/json" } });
 
+// Secret key ng PayMongo: ang live key (COOLFIX_LIVE_KEY o "COOLFIX_LIVE KEY") kung meron, kung wala ay PAYMONGO_SECRET_KEY.
+function pmKey(): { key: string; from: string } {
+  const env = Deno.env.toObject();
+  const clean = (v?: string) => (v ?? "").trim().replace(/^["']|["']$/g, "");
+  const names = Object.keys(env).filter((n) => /^COOLFIX[\s_-]*LIVE[\s_-]*KEY$/i.test(n.trim()));
+  for (const n of names) { const v = clean(env[n]); if (/^sk_(test|live)_/.test(v)) return { key: v, from: n }; }
+  return { key: clean(env.PAYMONGO_SECRET_KEY), from: "PAYMONGO_SECRET_KEY" };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return out({ error: "POST lang" }, 405);
 
-  const SK = (Deno.env.get("PAYMONGO_SECRET_KEY") ?? "").trim().replace(/^["']|["']$/g, "");
+  const PK = pmKey(), SK = PK.key;
   if (!/^sk_(test|live)_/.test(SK)) {
     // Walang ibinubunyag na key; uri lang ng problema para madaling ayusin
     const why = !SK ? "walang PAYMONGO_SECRET_KEY" : SK.startsWith("pk_") ? "public key (pk_) ang nailagay, dapat secret key (sk_)" : "hindi sk_test_ o sk_live_ ang simula";

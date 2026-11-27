@@ -18,15 +18,24 @@ async function hmac(secret: string, msg: string) {
 }
 const ok = (msg = "ok", status = 200) => new Response(msg, { status });
 
+// Secret key ng PayMongo: ang live key (COOLFIX_LIVE_KEY o "COOLFIX_LIVE KEY") kung meron, kung wala ay PAYMONGO_SECRET_KEY.
+function pmKey(): { key: string; from: string } {
+  const env = Deno.env.toObject();
+  const clean = (v?: string) => (v ?? "").trim().replace(/^["']|["']$/g, "");
+  const names = Object.keys(env).filter((n) => /^COOLFIX[\s_-]*LIVE[\s_-]*KEY$/i.test(n.trim()));
+  for (const n of names) { const v = clean(env[n]); if (/^sk_(test|live)_/.test(v)) return { key: v, from: n }; }
+  return { key: clean(env.PAYMONGO_SECRET_KEY), from: "PAYMONGO_SECRET_KEY" };
+}
+
 Deno.serve(async (req) => {
   const clean = (k: string) => (Deno.env.get(k) ?? "").trim().replace(/^["']|["']$/g, "");
-  const SK = clean("PAYMONGO_SECRET_KEY");
+  const PK = pmKey(), SK = PK.key;
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
   // Webhook secret: mula sa Secrets, o mula sa pm_config (ginawa ng paymongo-setup)
   let WH = clean("PAYMONGO_WEBHOOK_SECRET");
   if (!WH) { const { data } = await admin.from("pm_config").select("value").eq("key", "webhook_secret").maybeSingle(); WH = (data?.value ?? "").trim(); }
   // GET: pang-check lang kung kumpleto ang setup (walang ibinubunyag na key)
-  if (req.method === "GET") return new Response(JSON.stringify({ secret_key: /^sk_(test|live)_/.test(SK) ? SK.slice(0, 8) : !!SK, webhook_secret: WH.startsWith("whsk_") ? true : !!WH && "iba ang simula" }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
+  if (req.method === "GET") return new Response(JSON.stringify({ secret_key: /^sk_(test|live)_/.test(SK) ? SK.slice(0, 8) : !!SK, from: PK.from, webhook_secret: WH.startsWith("whsk_") ? true : !!WH && "iba ang simula" }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
   if (req.method !== "POST") return ok("POST lang", 405);
   if (!WH || !SK) { console.error("Kulang ang secrets"); return ok("not configured", 503); }
 
