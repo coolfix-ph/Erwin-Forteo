@@ -232,7 +232,7 @@ async function start(session) {
 async function enter() {
   const u = USER; err = "";
   $("who").textContent = first(u.name) + " · " + (u.role == "customer" ? "Customer" : u.role == "admin" ? "Admin" : "Technician"); $("lo").hidden = false;
-  subscribe();
+  subscribe(); document.body.classList.toggle('adm', u.role == 'admin');
   TAB = u.role == "customer" ? "find" : u.role == "admin" ? "ov" : "dash"; CUR = null;
   if (u.role == "customer") {
     await loadTechs(); show(); initGM();
@@ -240,7 +240,7 @@ async function enter() {
   } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs()]); show() }
   else { syncWatch(); show() }
 }
-$("lo").onclick = async () => { stopWatch(); if (channel) sb.removeChannel(channel); channel = null; await sb.auth.signOut(); USER = null; TRACK = null; mode = "login"; role = "customer"; cat = null; item = null; authView() };
+$("lo").onclick = async () => { stopWatch(); if (channel) sb.removeChannel(channel); channel = null; await sb.auth.signOut(); USER = null; TRACK = null; document.body.classList.remove("adm"); mode = "login"; role = "customer"; cat = null; item = null; authView() };
 
 // ---------- Navigation ----------
 const rk = () => USER.role == 'customer' ? 'c' : 't';
@@ -251,9 +251,10 @@ function tabList() {
   const c = USER.role == 'customer', ad = USER.role == 'admin';
   return ad ? [['ov', 'Overview'], ['tx', 'Transaction'], ['tt', 'Technician'], ['sv', 'Serbisyo'], ['pr', 'Base price'], ['rg', 'Rate guide']] : c ? [['find', 'Hanapin'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']] : [['dash', 'Dashboard'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']];
 }
+const ICON = { ov: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>', tx: '<path d="M4 6h16M4 12h16M4 18h10"/>', tt: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11l2 2 4-4"/>', sv: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>', pr: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01"/>', rg: '<path d="M4 4h12l4 4v12H4zM8 12h8M8 16h5"/>' };
 function tabsBar() {
   const nb = $('tabs'); nb.hidden = false;
-  nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${l}${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}</button>`).join('');
+  nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${ICON[k] ? `<svg class="ti" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>` : ''}<span>${l}</span>${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}</button>`).join('');
   nb.querySelectorAll('button').forEach(b => b.onclick = () => { TAB = b.dataset.t; CUR = null; if (TAB == 'find') TRACK = null; show() });
 }
 function show() {
@@ -486,10 +487,56 @@ function rateMarket() {
 
 // ---------- Admin ----------
 function adminView() { VIEW = "admin"; TAB == 'ov' ? admOv() : TAB == 'tx' ? admTx() : TAB == 'sv' ? admSv() : TAB == 'pr' ? admPr() : admTc() }
+let AP = 7;
 function admOv() {
-  const ok = TX.filter(x => x.st == 'Natapos'), g = ok.reduce((n, x) => n + x.amt, 0), us = PROFILES.filter(u => u.role != 'admin');
-  const d7 = [...Array(7)].map((_, i) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - 6 + i); const a = d.getTime(); return { l: d.toLocaleDateString('en-PH', { weekday: 'short' }), v: ok.filter(x => x.ts >= a && x.ts < a + 864e5).reduce((n, x) => n + x.amt, 0) } }), mx = Math.max(1, ...d7.map(x => x.v));
-  A.innerHTML = `<div class='panel au wide'><h2>Overview</h2><div class='stats s4'><div><b>${fmt(g)}</b><small>Kabuuang bayad</small></div><div><b>${fmt(fee(g))}</b><small>Kita ng CoolFix (15%)</small></div><div><b>${ok.length}/${TX.length}</b><small>Natapos na transaction</small></div><div><b>${us.filter(u => u.role == 'technician').length} / ${us.filter(u => u.role == 'customer').length}</b><small>Technician / Customer</small></div></div><h2 style='margin-top:16px'>Bayad sa nakaraang 7 araw</h2><div class='bars'>${d7.map(x => `<div><i style='height:${Math.round(x.v / mx * 100)}%' title='${fmt(x.v)}'></i><small>${x.l}</small></div>`).join('')}</div></div>`;
+  const DAY = 864e5, t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  const st = t0.getTime() - (AP - 1) * DAY, pst = st - AP * DAY;
+  const cur = TX.filter(x => x.ts >= st), prev = TX.filter(x => x.ts >= pst && x.ts < st);
+  const done = a => a.filter(x => x.st == 'Natapos'), sum = a => a.reduce((n, x) => n + x.amt, 0);
+  const g = sum(done(cur)), gp = sum(done(prev)), nd = done(cur).length, ndp = done(prev).length;
+  const act = TX.filter(x => ACTIVE.includes(x.st));
+  const techs = PROFILES.filter(u => u.role == 'technician'), custs = PROFILES.filter(u => u.role == 'customer');
+  const dl = (a, b) => b ? (a >= b ? '▲ ' : '▼ ') + Math.abs(Math.round((a - b) / b * 100)) + '% kumpara sa dati' : (a ? 'Bago ngayong period' : 'Wala pa');
+  const days = [...Array(AP)].map((_, i) => { const a = st + i * DAY, L = done(TX.filter(x => x.ts >= a && x.ts < a + DAY)); return { d: new Date(a), v: sum(L), n: L.length } });
+  const raw = Math.max(...days.map(x => x.v)), step = raw <= 0 ? 1000 : Math.pow(10, Math.floor(Math.log10(raw))) * (raw / Math.pow(10, Math.floor(Math.log10(raw))) > 5 ? 2 : raw / Math.pow(10, Math.floor(Math.log10(raw))) > 2 ? 1 : .5), mx = Math.max(step, Math.ceil(raw * 1.08 / step) * step);
+  const ticks = [mx, mx / 2, 0], peak = days.reduce((m, x, i) => x.v > days[m].v ? i : m, 0);
+  const lbl = (d, i) => AP <= 7 ? d.toLocaleDateString('en-PH', { weekday: 'short' }) : (i % 5 == 0 || i == AP - 1) ? d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }) : '';
+  const SS = ['Bago', 'Papunta na', 'Dumating na', 'Natapos', 'Kinansela', 'Tinanggihan'], sc = SS.map(s => [s, cur.filter(x => x.st == s).length]), smx = Math.max(1, ...sc.map(x => x[1]));
+  const tm = {}; done(cur).forEach(x => { const o = tm[x.tech_id] = tm[x.tech_id] || { n: x.tech_name, g: 0, j: 0 }; o.g += x.amt; o.j++ });
+  const top = Object.values(tm).sort((a, b) => b.g - a.g).slice(0, 5), recent = [...TX].sort((a, b) => b.ts - a.ts).slice(0, 6);
+  const pill = s => `<span class='pill ${s == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(s) ? 'no' : ''}'>${esc(s)}</span>`;
+  const kpi = (l, v, sub) => `<div class='kpi'><small>${l}</small><b>${v}</b><span>${sub}</span></div>`;
+  A.innerHTML = `<div class='dash'>
+  <div class='dh'><div><h2>Overview</h2><p class='mute'>${t0.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p></div>
+   <div class='chips' role='group' aria-label='Period'>${[[1, 'Ngayon'], [7, '7 araw'], [30, '30 araw']].map(([n, l]) => `<button class='chip' aria-pressed='${AP == n}' data-ap='${n}'>${l}</button>`).join('')}</div></div>
+  <div class='kpis'>${kpi('Kabuuang bayad', fmt(g), dl(g, gp))}${kpi('Kita ng CoolFix (15%)', fmt(fee(g)), dl(fee(g), fee(gp)))}${kpi('Natapos na booking', nd + `<small> / ${cur.length}</small>`, dl(nd, ndp))}${kpi('Aktibong booking', act.length, act.filter(x => x.st == 'Bago').length + ' naghihintay ng technician')}</div>
+  <div class='grid2'>
+   <section class='card'><div class='ch'><h3>Kita kada araw</h3><span class='mute'>Natapos na booking lang</span></div>
+    ${AP == 1 ? `<div class='hero'><b>${fmt(g)}</b><span class='mute'>${nd} natapos na booking ngayong araw</span></div>` : `<div class='chart' id='ch'><div class='yax'>${ticks.map(t => `<span>${t >= 1000 ? '₱' + (t / 1000) + 'k' : fmt(t)}</span>`).join('')}</div>
+    <div class='plot'>${ticks.map((t, i) => `<i class='gl' style='top:${i * 50}%'></i>`).join('')}<div class='cols'>${days.map((x, i) => `<div class='col' tabindex='0' data-i='${i}'>${i == peak && x.v > 0 ? `<em style='bottom:calc(${x.v / mx * 100}% + 4px)'>${fmt(x.v)}</em>` : ''}<i style='height:${x.v / mx * 100}%'></i></div>`).join('')}</div></div>
+    <div class='xax'>${days.map((x, i) => `<span>${lbl(x.d, i)}</span>`).join('')}</div><div class='tip' id='tip' hidden></div></div>`}
+   </section>
+   <section class='card'><div class='ch'><h3>Status ng booking</h3><span class='mute'>${cur.length} booking</span></div>
+    ${sc.map(([s, n]) => `<div class='hb'><span>${s}</span><div><i style='width:${n / smx * 100}%'></i></div><b>${n}</b></div>`).join('')}
+    <div class='mini'><div><b>${techs.filter(u => u.online).length}<small> / ${techs.length}</small></b><span>Technician na online</span></div><div><b>${custs.length}</b><span>Customer</span></div></div>
+   </section>
+  </div>
+  <div class='grid2'>
+   <section class='card'><div class='ch'><h3>Pinakabagong booking</h3><button class='chip' id='allTx'>Tingnan lahat</button></div>
+    ${recent.length ? recent.map(x => `<div class='li'><div class='av'>${esc(ini(x.cust))}</div><div><b>${esc(x.cust)}</b><small>${esc(x.svc)} · ${esc(first(x.tech))}</small></div><div class='km'>${fmt(x.amt)}<small>${pill(x.st)}</small></div></div>`).join('') : `<p class='mute'>Wala pang booking.</p>`}
+   </section>
+   <section class='card'><div class='ch'><h3>Top technician</h3><span class='mute'>ayon sa kita</span></div>
+    ${top.length ? top.map((o, i) => `<div class='li'><div class='rk'>${i + 1}</div><div><b>${esc(o.n)}</b><small>${o.j} natapos</small></div><div class='km'>${fmt(o.g)}<small>${fmt(o.g - fee(o.g))} sa technician</small></div></div>`).join('') : `<p class='mute'>Wala pang natapos na booking sa period na ito.</p>`}
+   </section>
+  </div></div>`;
+  A.querySelectorAll('[data-ap]').forEach(b => b.onclick = () => { AP = +b.dataset.ap; admOv() });
+  $('allTx').onclick = () => { TAB = 'tx'; show() };
+  const tip = $('tip');
+  if (tip) A.querySelectorAll('.col').forEach(c => {
+    const on = () => { const x = days[c.dataset.i]; tip.innerHTML = `<b>${x.d.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' })}</b><br>${fmt(x.v)} · ${x.n} booking`; tip.hidden = false; const r = c.getBoundingClientRect(), p = $('ch').getBoundingClientRect(); tip.style.left = Math.min(p.width - 140, Math.max(0, r.left - p.left + r.width / 2 - 70)) + 'px'; c.classList.add('on') };
+    const off = () => { tip.hidden = true; c.classList.remove('on') };
+    c.onmouseenter = on; c.onfocus = on; c.onmouseleave = off; c.onblur = off;
+  });
 }
 function admTx() {
   const S = ['Lahat', 'Bago', 'Papunta na', 'Dumating na', 'Natapos', 'Kinansela', 'Tinanggihan'], q = AF.q.toLowerCase();
