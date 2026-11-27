@@ -153,7 +153,7 @@ async function loadProfiles() { const { data } = await sb.from("profiles").selec
 function subscribe() {
   if (channel) sb.removeChannel(channel);
   channel = sb.channel("coolfix-" + USER.id)
-    .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, p => { if (p.new && p.new.id) { const b = upsertTx(p.new); onBooking(b) } })
+    .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, p => { if (p.new && p.new.id) { const pr = TX.find(x => x.id == p.new.id), was = pr && pr.st, b = upsertTx(p.new); liveNote(b, pr ? was : null); onBooking(b) } })
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, async p => {
       const m = p.new, c = CONVS.find(x => x.id == m.conv_id);
       if (!c) { await loadConvs() } else if (!c.m.some(x => x.id == m.id)) c.m.push({ id: m.id, f: m.sender, t: m.body, ts: new Date(m.created_at).getTime() });
@@ -191,7 +191,7 @@ function refresh(kind) {
 
 // ---------- Auth ----------
 function authView(notice) {
-  VIEW = "auth"; A.hidden = false; $("app").hidden = true; $("lo").hidden = true; $("tabs").hidden = true; $("who").textContent = "";
+  VIEW = "auth"; A.hidden = false; $("app").hidden = true; $("lo").hidden = true; $("tabs").hidden = true; $("who").textContent = ""; if ($("bell")) $("bell").hidden = true; const ts = $("toast"); if (ts) ts.remove();
   const su = mode == "signup", tc = role == "technician";
   A.innerHTML = `<div class="panel au"><img class="logo big" src="img/logo.png" alt="CoolFix">${notice ? `<p class="note">${notice}</p>` : ""}<div class="chips"><button class="chip" aria-pressed="${!su}" data-m="login">Mag-log in</button><button class="chip" aria-pressed="${su}" data-m="signup">Gumawa ng account</button></div>
  ${su ? `<p class="mute" style="margin:0 0 6px">Mag-sign up bilang</p><div class="chips"><button class="chip" aria-pressed="${!tc}" data-r="customer">Customer</button><button class="chip" aria-pressed="${tc}" data-r="technician">Technician</button></div><label>Buong pangalan<input id="f_n" autocomplete="name"></label><label for="f_p">Mobile number</label><div class="ph"><span class="cc"><svg viewBox="0 0 30 15" width="24" height="12" aria-hidden="true"><path fill="#0038A8" d="M0 0h30v7.5H0z"/><path fill="#CE1126" d="M0 7.5h30V15H0z"/><path fill="#fff" d="M0 0l13 7.5L0 15z"/><circle cx="4.6" cy="7.5" r="1.8" fill="#FCD116"/></svg>+63</span><input id="f_p" type="tel" inputmode="numeric" placeholder="9XX XXX XXXX" autocomplete="tel-national" maxlength="13"></div>` : ""}
@@ -319,13 +319,78 @@ const rk = () => USER.role == 'customer' ? 'c' : 't';
 const myRead = c => new Date(rk() == 'c' ? c.read_c : c.read_t).getTime();
 const unreadOf = c => c.m.filter(m => m.f != rk() && m.ts > myRead(c)).length;
 const unreadN = () => USER && USER.role != 'admin' ? CONVS.reduce((n, c) => n + unreadOf(c), 0) : 0;
+// ---------- Notifications ----------
+// Galing sa mga booking mismo ang listahan (walang hiwalay na table). Naka-save sa device kung hanggang kailan nabasa.
+const NMSG = { Tinanggap: b => `Tinanggap ni ${first(b.tech_name)} ang booking mo`, 'Papunta na': b => `Papunta na si ${first(b.tech_name)}`, 'Dumating na': b => `Dumating na si ${first(b.tech_name)}`, Natapos: b => `Tapos na ang trabaho ni ${first(b.tech_name)}`, Tinanggihan: b => `Hindi available si ${first(b.tech_name)}. Pumili ng ibang technician.` };
+const NKEY = () => 'cf_nread_' + USER.id, tms = x => new Date(x).getTime();
+function notifs() {
+  if (!USER || USER.role == 'admin') return [];
+  const c = USER.role == 'customer', L = [];
+  TX.filter(b => c ? b.customer_id == USER.id : b.tech_id == USER.id).forEach(b => {
+    if (c) { if (NMSG[b.st]) L.push({ id: b.id, ts: tms(b.updated_at), k: b.st, t: NMSG[b.st](b), s: b.svc + (b.st == 'Tinanggap' && bWhen(b) ? ' · ' + bWhen(b) : '') }) }
+    else {
+      L.push({ id: b.id, ts: b.ts, k: 'Bago', t: `Bagong booking mula kay ${first(b.cust_name)}`, s: b.svc + ' · ' + (b.sched_at ? bWhen(b) : 'Ngayon na') });
+      if (b.st == 'Kinansela') L.push({ id: b.id, ts: tms(b.updated_at), k: 'Kinansela', t: `Kinansela ni ${first(b.cust_name)} ang booking`, s: b.svc });
+    }
+  });
+  return L.sort((a, b) => b.ts - a.ts).slice(0, 30);
+}
+const nRead = () => { let v = +localStorage.getItem(NKEY()); if (!v) { v = Date.now(); localStorage.setItem(NKEY(), v) } return v };
+const nUnread = () => { const r = nRead(); return notifs().filter(n => n.ts > r).length };
+const BELL = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
+function bell() {
+  const b = $("bell"); if (!b) return;
+  if (!USER || USER.role == 'admin') { b.hidden = true; return }
+  const n = nUnread(); b.hidden = false; b.innerHTML = BELL + (n ? `<i>${n > 9 ? '9+' : n}</i>` : '');
+  b.setAttribute('aria-label', n ? `Notification, ${n} bago` : 'Notification'); b.onclick = notifPanel;
+}
+function openNotif(n) {
+  const b = TX.find(x => x.id == n.id); if (!b) return;
+  if (USER.role == 'customer') { TAB = 'find'; TRACK = b; show() }
+  else { TAB = 'dash'; CUR = null; show(); const c = $("job-" + b.id); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("flash"); setTimeout(() => c.classList.remove("flash"), 1500) } }
+}
+function notifPanel() {
+  const r = nRead(), L = notifs(), d = document.createElement("div"); d.className = "sheet-bg"; d.id = "nsh";
+  const ask = "Notification" in window && Notification.permission == "default";
+  d.innerHTML = `<div class="sheet nsheet" role="dialog" aria-modal="true" aria-labelledby="nst"><div class="nhd"><h2 id="nst">Notification</h2><button class="chip" id="nx">Isara</button></div>
+  ${ask ? `<button class="chip" id="nperm" style="margin:0 0 8px">I-on ang notification sa device na ito</button>` : ''}
+  ${L.length ? L.map((n, i) => `<button class="nrow${n.ts > r ? ' new' : ''}" data-n="${i}"><span class="nic ${n.k == 'Tinanggihan' || n.k == 'Kinansela' ? 'no' : n.k == 'Natapos' ? 'ok' : ''}">${BELL}</span><span class="nt"><b>${esc(n.t)}</b><small>${esc(n.s)}</small><small>${dstr(n.ts)} · ${tlabel(n.ts)}</small></span></button>`).join('') : `<p class="mute">${USER.role == 'customer' ? 'Lalabas dito kapag tinanggap o may update ang technician sa booking mo.' : 'Lalabas dito ang mga bagong booking ng customer.'}</p>`}</div>`;
+  document.body.appendChild(d);
+  localStorage.setItem(NKEY(), Date.now()); bell();
+  const close = () => d.remove();
+  d.onclick = e => { if (e.target == d) close() };
+  $("nx").onclick = close;
+  if ($("nperm")) $("nperm").onclick = async () => { try { await Notification.requestPermission() } catch (e) { } $("nperm").remove() };
+  d.querySelectorAll("[data-n]").forEach(b => b.onclick = () => { close(); openNotif(L[b.dataset.n]) });
+}
+// Alerto habang bukas ang app: banner sa itaas, tunog, vibrate, at notification ng device kung pinayagan.
+function liveNote(b, was) {
+  if (!USER || USER.role == 'admin') return;
+  let n = null;
+  if (USER.role == 'technician' && b.tech_id == USER.id) {
+    if (was == null && b.st == 'Bago') n = { t: `Bagong booking mula kay ${first(b.cust_name)}`, s: b.svc + ' · ' + (b.sched_at ? bWhen(b) : 'Ngayon na') };
+    else if (b.st == 'Kinansela' && was != 'Kinansela') n = { t: `Kinansela ni ${first(b.cust_name)} ang booking`, s: b.svc };
+  } else if (USER.role == 'customer' && b.customer_id == USER.id && was != b.st && NMSG[b.st]) n = { t: NMSG[b.st](b), s: b.svc };
+  if (!n) return;
+  n.id = b.id; toast(n); bell();
+  try { const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain(); o.frequency.value = 880; o.connect(g); g.connect(a.destination); g.gain.setValueAtTime(.15, a.currentTime); g.gain.exponentialRampToValueAtTime(.001, a.currentTime + .4); o.start(); o.stop(a.currentTime + .4) } catch (e) { }
+  try { navigator.vibrate && navigator.vibrate([150, 80, 150]) } catch (e) { }
+  try { if ("Notification" in window && Notification.permission == "granted" && document.hidden) new Notification(n.t, { body: n.s, icon: "img/logo.png", tag: "cf-" + b.id }) } catch (e) { }
+}
+function toast(n) {
+  const old = $("toast"); if (old) old.remove();
+  const d = document.createElement("button"); d.id = "toast"; d.className = "toast"; d.setAttribute("role", "status");
+  d.innerHTML = `<span class="nic">${BELL}</span><span class="nt"><b>${esc(n.t)}</b><small>${esc(n.s)}</small></span>`;
+  d.onclick = () => { d.remove(); localStorage.setItem(NKEY(), Date.now()); bell(); openNotif(n) };
+  document.body.appendChild(d); setTimeout(() => d.remove(), 8000);
+}
 function tabList() {
   const c = USER.role == 'customer', ad = USER.role == 'admin';
   return ad ? [['ov', 'Overview'], ['rq', 'Requirements'], ['tx', 'Transaction'], ['tt', 'Technician'], ['sv', 'Serbisyo'], ['pr', 'Base price'], ['rg', 'Rate guide']] : c ? [['find', 'Hanapin'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']] : [['dash', 'Dashboard'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']];
 }
 const ICON = { ov: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>', rq: '<path d="M14 3H6v18h12V7zM14 3v4h4M9 13l2 2 4-4"/>', tx: '<path d="M4 6h16M4 12h16M4 18h10"/>', tt: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11l2 2 4-4"/>', sv: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>', pr: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01"/>', rg: '<path d="M4 4h12l4 4v12H4zM8 12h8M8 16h5"/>' };
 function tabsBar() {
-  const nb = $('tabs'); nb.hidden = false;
+  bell(); const nb = $('tabs'); nb.hidden = false;
   nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${ICON[k] ? `<svg class="ti" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>` : ''}<span>${l}</span>${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}${k == 'rq' && PROFILES.some(u => u.role == 'technician' && u.doc_status == 'sinusuri') ? ' <i class="dot"></i>' : ''}</button>`).join('');
   nb.querySelectorAll('button').forEach(b => b.onclick = () => { TAB = b.dataset.t; CUR = null; if (TAB == 'find') TRACK = null; show() });
 }
@@ -371,17 +436,20 @@ function home() {
   if (GL) gClear(); $("route").innerHTML = ""; sel = null;
   pins();
   const L = list(), act = myBookings().filter(x => ACTIVE.includes(x.st)), inCart = (c, x) => CART.find(y => y.c == c.k && y.n == x[0]);
-  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}"><div class="av">${esc(ini(t.n))}</div><div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}<small>${esc(t.s.join(', '))}</small></div><div class="km">${dist(t).toFixed(1)} km<small>~${eta(t)} min</small></div></button>`).join("") || `<p class="mute">Wala pang online na technician na kaya ${CART.length > 1 ? 'lahat ng nasa cart mo' : 'ang serbisyong ito'}. ${CART.length > 1 ? 'Subukang hatiin sa dalawang booking, o ' : ''}subukan ulit mamaya.</p>`;
+  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}"><div class="av">${esc(ini(t.n))}</div><div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}<small>${esc(t.s.join(', '))}</small></div><div class="km">${dist(t).toFixed(1)} km<small>~${eta(t)} min</small><span class="bkp">I-book</span></div></button>`).join("") || `<p class="mute">Wala pang online na technician na kaya ${CART.length > 1 ? 'lahat ng nasa cart mo' : 'ang serbisyong ito'}. ${CART.length > 1 ? 'Subukang hatiin sa dalawang booking, o ' : ''}subukan ulit mamaya.</p>`;
   const hd = `<div class='hello'><b>Kumusta, ${esc(first(USER.name))}!</b><span>${TECHS.filter(t => t.online).length} technician ang online ngayon</span></div><div class='stats' id='hstats'>${statsHtml()}</div>${act.length ? `<p class="note">May aktibo kang booking. <button class="chip" id="ab">Tingnan</button></p>` : ""}`;
   let body;
   if (!cat) body = `<h2>${CART.length ? 'Magdagdag pa ng serbisyo' : 'Anong serbisyo ang kailangan mo?'}</h2><div class="cats">${CAT.map((c, i) => `<button class="cat" data-c="${i}"><b>${esc(c.t)}</b><small>${esc(c.d)}</small></button>`).join("")}</div><p class="mute" style="font-size:13px">Pwedeng magdagdag ng ilang serbisyo sa iisang booking. Tingnan ang <b>Rate guide</b> para sa lahat ng presyo.</p>`;
   else body = `<button class="chip" id="cb">‹ Lahat ng serbisyo</button><h2 style="margin:10px 0 2px">${esc(cat.t)}</h2><p class="mute" style="margin:0 0 4px;font-size:13px">${esc(cat.n)} I-tap para idagdag sa cart.</p>
  ${cat.g.map((g, gi) => `<p class="gh">${esc(g[0])}</p>${g[1].map((x, xi) => { const c = inCart(cat, x); return `<button class="sv" aria-pressed="${!!c}" data-g="${gi}" data-x="${xi}"><span>${esc(x[0])}${isNC2({ t: cat.t, n: x[0] }) ? ' <small class="nct">NC II lang</small>' : ''}</span><span class="sva"><b>${fmt(x[1])}</b><i>${c ? '✓ ' + c.q : '+ Idagdag'}</i></span></button>` }).join("")}`).join("")}`;
-  const tech = CART.length ? `<h3 style="margin:16px 0 4px">Pumili ng technician</h3>${cartNC2() ? `<p class="note">Para sa kaligtasan, <b>NC II certified</b> na technician lang ang pwede sa ${esc(CART.filter(isNC2).map(x => x.n).join(', '))}.</p>` : ''}<p class="mute" style="margin:0 0 4px;font-size:13px">${L.length} technician na malapit sa'yo na kaya ang lahat ng nasa cart</p>${tl}`
+  const tech = CART.length ? `<h3 style="margin:16px 0 4px" id="tlh" tabindex="-1">Pumili ng technician</h3>${cartNC2() ? `<p class="note">Para sa kaligtasan, <b>NC II certified</b> na technician lang ang pwede sa ${esc(CART.filter(isNC2).map(x => x.n).join(', '))}.</p>` : ''}<p class="mute" style="margin:0 0 4px;font-size:13px">${L.length} technician na malapit sa'yo na kaya ang lahat ng nasa cart</p>${tl}`
     : cat ? `<h3 style="margin:16px 0 4px">Pumili muna ng serbisyo sa itaas</h3>` : '';
-  const bar = cat && CART.length ? `<div class="cartbar" role="status"><span>${cartN()} sa cart · ${fmt(cartSum() + FEE)}</span><button id="gocart">Tingnan ang cart</button></div>` : '';
-  $("panel").innerHTML = hd + body + bar + cartBox(true) + tech;
-  if ($("gocart")) $("gocart").onclick = () => $("cart").scrollIntoView({ behavior: "smooth", block: "start" });
+  const bar = cat && CART.length ? `<div class="cartbar" role="status"><span>${cartN()} sa cart · ${fmt(cartSum() + FEE)}</span><button id="gocart">${L.length ? 'I-book' : 'Tingnan ang cart'}</button></div>` : '';
+  const bkb = CART.length ? (L.length ? `<button class="btn" id="bkgo">I-book ngayon · pumili ng technician</button>` : `<button class="btn" disabled>Walang available na technician ngayon</button><p class="mute" style="font-size:13px;margin:6px 0 0">Nasa cart pa rin ang mga serbisyo mo. Subukan ulit mamaya kapag may naka-online na technician.</p>`) : '';
+  $("panel").innerHTML = hd + body + bar + cartBox(true) + bkb + tech;
+  const goT = () => { const h = $("tlh"); h.scrollIntoView({ behavior: "smooth", block: "start" }); h.focus({ preventScroll: true }) };
+  if ($("bkgo")) $("bkgo").onclick = goT;
+  if ($("gocart")) $("gocart").onclick = () => L.length ? goT() : $("cart").scrollIntoView({ behavior: "smooth", block: "start" });
   if ($("ab")) $("ab").onclick = () => { TRACK = act[0]; trackView() };
   document.querySelectorAll(".cat").forEach(b => b.onclick = () => { cat = CAT[b.dataset.c]; home() });
   if (cat) {
@@ -588,7 +656,7 @@ function techDash() {
     : `<div class="jb doc ${ds}"><b>${noId && ds != "kulang" ? "Kailangan na rin ng Valid ID" : ds == "aprubado" ? "Palitan ang dokumento" : ds == "sinusuri" ? "Sinusuri na ng admin ang dokumento mo" : ds == "tinanggihan" ? "Hindi naaprubahan ang dokumento mo" : "Kailangan ng dokumento bago makatanggap ng booking"}</b>
     <p class="mute" style="margin:4px 0">${noId && ds != "kulang" ? `Bagong requirement ang valid ID para sa lahat ng technician. I-upload ito sa ibaba.${ds == "aprubado" ? " Susuriin ulit ito ng admin, kaya hindi ka muna makakapag-online hangga't hindi naaaprubahan." : ""}` : ds == "sinusuri" && !RE ? `${ctName(u.cert_type)} · ${REQ ? "Makakapag-online ka kapag naaprubahan na ng admin." : "Pwede ka nang mag-online habang sinusuri."}` : ds == "tinanggihan" ? `Dahilan: ${esc(u.doc_note || "—")}. Mag-upload ulit ng malinaw na kopya.` : ds == "aprubado" ? "Kapag nagpalit ka, susuriin ulit ito ng admin at hindi ka muna makakapag-online." : "I-upload ang valid ID at NC II certificate mo. Kung walang NC II, ang DTI Business Permit at BIR COR (Form 2303)."}</p>
     ${form ? `<div id="dz"></div><p class="err" id="dze" role="alert"></p><button class="btn" id="dsub">I-submit ang dokumento</button>${RE ? `<button class="btn alt" id="dcx">Huwag na</button>` : ""}` : `<button class="chip" id="reup">Palitan ang dokumento</button>`}</div>`;
-  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p>${docBox}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><button class="btn ${u.online ? "" : "alt"}" id="ol" ${lock ? "disabled" : ""}>${u.online ? "Online ka (i-tap para mag-offline)" : lock ? (ds == "sinusuri" ? "Hinihintay ang pag-apruba ng dokumento" : "I-upload muna ang dokumento para mag-online") : "Offline ka (i-tap para mag-online)"}</button><p class="err" id="de" role="alert"></p>${techCal(J)}<h3 style="margin:16px 0 4px">Mga aktibong booking</h3><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<p class="err" id="pe" role="alert"></p></div>`;
+  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p><button type="button" class="olbar${u.online ? " on" : ""}" id="ol" role="switch" aria-checked="${!!u.online}" ${lock ? "disabled" : ""}><span class="old"></span><span class="nt"><b>${u.online ? "Online ka" : "Offline ka"}</b><small>${u.online ? "Nakikita ka ng mga customer at pwede kang ma-book. I-tap para mag-offline." : lock ? (ds == "sinusuri" ? "Hinihintay ang pag-apruba ng admin sa dokumento mo." : "I-upload muna ang dokumento sa ibaba para makapag-online.") : "Hindi ka nakikita ng mga customer. I-tap para mag-online."}</small></span><span class="sw" aria-hidden="true"><i></i></span></button>${docBox}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><p class="err" id="de" role="alert"></p>${techCal(J)}<h3 style="margin:16px 0 4px">Mga aktibong booking</h3><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<p class="err" id="pe" role="alert"></p></div>`;
   if ($("dz")) { if (!CT) CT = u.cert_type || null; mountDocs($("dz")) }
   if ($("reup")) $("reup").onclick = () => { RE = true; techDash() };
   if ($("dcx")) $("dcx").onclick = () => { RE = false; FILES = {}; techDash() };
@@ -603,7 +671,7 @@ function techDash() {
   $("ol").onclick = async () => {
     busy("ol", true);
     const upd = { online: !u.online };
-    if (upd.online) { const p = await getLoc(); if (p) { upd.lat = p.lat; upd.lng = p.lng } else $("de").textContent = "Hindi makuha ang lokasyon mo. Payagan ang location para mas tama ang layo na makikita ng customer." }
+    if (upd.online) { const sm = $("ol").querySelector("small"); if (sm) sm.textContent = "Kinukuha ang lokasyon mo…"; const p = await getLoc(); if (p) { upd.lat = p.lat; upd.lng = p.lng } else $("de").textContent = "Hindi makuha ang lokasyon mo. Payagan ang location para mas tama ang layo na makikita ng customer." }
     const { data, error } = await sb.from("profiles").update(upd).eq("id", u.id).select().single();
     if (error) { busy("ol", false); $("de").textContent = "Hindi na-update: " + error.message; return }
     USER = data; techDash();
