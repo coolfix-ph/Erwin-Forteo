@@ -1,8 +1,8 @@
 (function(){
-const DB={profiles:[],bookings:[],conversations:[],messages:[],settings:[],wallets:[],wallet_tx:[],topups:[]};let seq=1,uid=null;const subs=[];
+const DB={profiles:[],bookings:[],conversations:[],messages:[],settings:[],wallets:[],wallet_tx:[],topups:[],reports:[]};let seq=1,uid=null;const subs=[];
 const users=[];const listeners=[];
 const now=()=>new Date().toISOString();
-function emit(table,ev,row){subs.forEach(s=>{if(s.table==table&&(s.event=='*'||s.event==ev))setTimeout(()=>s.cb({new:row}),5)})}
+function emit(table,ev,row){subs.forEach(s=>{if(s.table==table&&(s.event=='*'||s.event==ev))setTimeout(()=>s.cb({new:JSON.parse(JSON.stringify(row))}),5)})}
 function Q(t){this.t=t;this.f=[];this.op='select';this.one=false}
 Q.prototype.select=function(){if(this.op=='select')this.op='select';this.ret=true;return this};
 Q.prototype.eq=function(k,v){this.f.push(r=>r[k]==v);return this};
@@ -15,12 +15,13 @@ Q.prototype.upsert=function(o,opt){this.op='upsert';this.o=o;this.opt=opt;return
 Q.prototype.then=function(res,rej){try{res(this.run())}catch(e){rej(e)}};
 function defaults(t,o){o={...o};if(t=='bookings'){o.id=seq++;o.code='CF-'+(1000+o.id);o.status=o.status||'Bago';o.created_at=o.updated_at=now();Object.assign(o,{cust_phone:'',rate:20,extra_amt:0,extra_note:'',q_status:'wala',q_amt:null,q_note:'',final_amt:null,commission:null,rating:null,review:''})}
  if(t=='topups'){o.id=seq++;o.status='sinusuri';o.note='';o.created_at=now()}
+ if(t=='reports'){o.id=seq++;o.code='RP-'+(1000+o.id);o.status=o.status||'bago';o.admin_note=o.admin_note||'';o.created_at=o.updated_at=now()}
  if(t=='conversations'){o.id='c'+seq++;o.read_c=now();o.read_t='1970-01-01T00:00:00Z';o.created_at=now()}
  if(t=='messages'){o.id=seq++;o.created_at=now()} return o}
 Q.prototype.run=function(){const T=DB[this.t];let rows;
  if(this.op=='select'){rows=T.filter(r=>this.f.every(f=>f(r)))}
  else if(this.op=='insert'){if(this.t=='bookings'&&this.o.sched_at){const m=new Date(this.o.sched_at).getTime();if(m<Date.now()-3e5)return{data:null,error:{message:'Lumipas na ang oras na pinili mo. Pumili ng ibang oras'}};if(T.some(x=>x.tech_id==this.o.tech_id&&x.sched_at&&ACT.includes(x.status)&&Math.abs(new Date(x.sched_at).getTime()-m)<72e5))return{data:null,error:{message:'May booking na ang technician sa oras na ito. Pumili ng ibang oras'}}}if(this.t=='bookings'&&low(this.o.tech_id))return{data:null,error:{message:'Hindi available ngayon ang technician na ito. Pumili ng iba'}};const r=defaults(this.t,this.o);T.push(r);rows=[r];emit(this.t,'INSERT',r)}
- else if(this.op=='update'){rows=T.filter(r=>this.f.every(f=>f(r)));if(this.t=='profiles'&&this.o.online&&rows.some(r=>r.role=='technician'&&(this.o.doc_status||r.doc_status)!='aprubado'))return {data:null,error:{message:'Hindi pa aprubado ang mga dokumento mo'}};if(this.t=='profiles'&&this.o.online&&rows.some(r=>r.role=='technician'&&low(r.id)))return{data:null,error:{message:'Kulang ang wallet balance mo'}};rows.forEach(r=>{const was=r.status;Object.assign(r,this.o);if(this.t=='bookings'){r.updated_at=now();if(r.status=='Natapos'&&was!='Natapos'){r.final_amt=r.amt+r.extra_amt;r.commission=Math.round(r.final_amt*r.rate/100);r.done_at=now();r.warranty_until=new Date(Date.now()+30*864e5).toISOString();wadd(r.tech_id,'commission',-r.commission,'Commission · '+r.code);if(r.booking_fee)wadd(r.tech_id,'booking_fee',-r.booking_fee,'Booking fee · '+r.code)}}emit(this.t,'UPDATE',r)})}
+ else if(this.op=='update'){rows=T.filter(r=>this.f.every(f=>f(r)));if(this.t=='profiles'&&this.o.online&&rows.some(r=>r.role=='technician'&&(this.o.doc_status||r.doc_status)!='aprubado'))return {data:null,error:{message:'Hindi pa aprubado ang mga dokumento mo'}};if(this.t=='profiles'&&this.o.online&&rows.some(r=>r.role=='technician'&&low(r.id)))return{data:null,error:{message:'Kulang ang wallet balance mo'}};rows.forEach(r=>{const was=r.status;Object.assign(r,this.o);if(this.t=='reports')r.updated_at=now();if(this.t=='bookings'){r.updated_at=now();if(r.status=='Natapos'&&was!='Natapos'){r.final_amt=r.amt+r.extra_amt;r.commission=Math.round(r.final_amt*r.rate/100);r.done_at=now();r.warranty_until=new Date(Date.now()+30*864e5).toISOString();wadd(r.tech_id,'commission',-r.commission,'Commission · '+r.code);if(r.booking_fee)wadd(r.tech_id,'booking_fee',-r.booking_fee,'Booking fee · '+r.code)}}emit(this.t,'UPDATE',r)})}
  else if(this.op=='upsert'){const keys=(this.opt?.onConflict||(this.t=='settings'?'key':'id')).split(',');let r=T.find(x=>keys.every(k=>x[k]==this.o[k]));if(r)Object.assign(r,this.o);else{r=defaults(this.t,this.o);T.push(r)}rows=[r]}
  rows=JSON.parse(JSON.stringify(rows));
  if(this.one)return rows[0]?{data:rows[0],error:null}:{data:null,error:{message:'not found'}};return {data:rows,error:null}};
@@ -31,7 +32,7 @@ const low=id=>setv('wallet_required')===true&&bal(id)<(setv('wallet_min')??200);
 function wadd(t,kind,amt,note){let w=DB.wallets.find(x=>x.tech_id==t);if(!w){w={tech_id:t,balance:0};DB.wallets.push(w)}w.balance+=amt;DB.wallet_tx.push({id:seq++,tech_id:t,kind,amt,balance_after:w.balance,note,created_at:now()});emit('wallets','UPDATE',{...w})}
 const bk=id=>DB.bookings.find(x=>x.id==id);
 const upd=b=>{b.updated_at=now();emit('bookings','UPDATE',JSON.parse(JSON.stringify(b)))};
-const RPC={
+const RPC={tech_reviews:a=>DB.bookings.filter(b=>b.tech_id==a.t&&b.rating).map(b=>{const p=DB.profiles.find(x=>x.id==b.customer_id)||{};const w=(p.name||'Customer').trim().split(/\s+/);return{rating:b.rating,review:b.review||'',rated_at:b.rated_at||b.updated_at,who:w[0]+(w[1]?' '+w[1][0]+'.':'')}}),
  my_profile:()=>{const p=DB.profiles.find(x=>x.id==uid);return p?{...p}:null},
  admin_profiles:()=>DB.profiles.map(x=>({...x})),
  tech_busy:a=>DB.bookings.filter(x=>x.tech_id==a.t&&x.sched_at&&ACT.includes(x.status)).map(x=>x.sched_at),

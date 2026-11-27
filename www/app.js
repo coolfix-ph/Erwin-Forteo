@@ -161,6 +161,69 @@ function bindComm() {
     USER = { ...USER, socials: out }; SED = false; techDash();
   };
 }
+// ---------- Mga review ng technician ----------
+const RVC = {};
+const starRow = n => `<span class="star" aria-label="${n} sa 5 star">${'★'.repeat(n)}<span class="st0">${'★'.repeat(5 - n)}</span></span>`;
+async function reviewsInto(el, id, nm) {
+  if (!el || !sb.rpc) return;
+  let L = RVC[id] && Date.now() - RVC[id].at < 60e3 ? RVC[id].L : null;
+  if (!L) { const { data, error } = await sb.rpc('tech_reviews', { t: id, n: 20 }); if (error) return; L = data || []; RVC[id] = { L, at: Date.now() } }
+  if (!el.isConnected) return;
+  const s = STATS[id], avg = L.length ? L.reduce((n, x) => n + x.rating, 0) / L.length : 0, dist = [5, 4, 3, 2, 1].map(k => [k, L.filter(x => x.rating == k).length]);
+  el.innerHTML = `<div class="rvw"><h3>${nm ? 'Mga review kay ' + esc(nm) : 'Mga review mo'}</h3>${L.length ? `<div class="rvs"><div class="rva"><b>${(s && s.rating ? Number(s.rating) : avg).toFixed(1)}</b>${starRow(Math.round(s && s.rating ? Number(s.rating) : avg))}<small>${s && s.reviews || L.length} rating</small></div><div class="rvd">${dist.map(([k, c]) => `<div><span>${k}★</span><i><em style="width:${L.length ? c / L.length * 100 : 0}%"></em></i><small>${c}</small></div>`).join('')}</div></div>
+  ${L.filter(x => x.review).slice(0, 8).map(x => `<div class="rvi">${starRow(x.rating)} <b>${esc(x.who || 'Customer')}</b><small> · ${x.rated_at ? dabs(x.rated_at) : ''}</small><p>${esc(x.review)}</p></div>`).join('') || '<p class="mute" style="font-size:14px">Wala pang nakasulat na komento.</p>'}` : `<p class="mute" style="font-size:14px">${nm ? 'Wala pang review si ' + esc(nm) + '. Ikaw ang mauna pagkatapos ng trabaho.' : 'Wala ka pang review. Lalabas dito ang rating ng mga customer pagkatapos ng trabaho.'}</p>`}</div>`;
+}
+// ---------- Customer service report ----------
+let REPS = [], RF = { cat: '', b: '', t: '' }, RFILE = null;
+const RCAT = { technician: 'Problema sa technician', bayad: 'Bayad o singil', app: 'Problema sa app', kaligtasan: 'Kaligtasan', iba: 'Iba pa' };
+const RPS = { bago: 'Natanggap', inaasikaso: 'Inaasikaso', naresolba: 'Naresolba' };
+const rpill = st => `<span class="pill ${st == 'naresolba' ? 'ok' : st == 'bago' ? 'wt' : ''}">${RPS[st] || st}</span>`;
+async function loadReports() { const { data } = await sb.from("reports").select("*").order("created_at", { ascending: false }).limit(200); REPS = data || [] }
+function reportView() {
+  VIEW = 'cs'; const mine = REPS.filter(x => x.reporter_id == USER.id), B = myBookings().slice(0, 20);
+  A.innerHTML = `<div class="panel au"><h2>Customer service</h2><p class="mute" style="margin:0">May problema sa technician, sa bayad o sa app? Sabihin mo sa amin. Ang CoolFix team lang ang makakabasa nito.</p>
+  <label>Tungkol saan?<select id="rc"><option value="">Pumili…</option>${Object.entries(RCAT).map(([k, v]) => `<option value="${k}" ${RF.cat == k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+  <label>Booking (kung may kinalaman)<select id="rb"><option value="">Wala / hindi tungkol sa booking</option>${B.map(b => `<option value="${b.id}" ${RF.b == String(b.id) ? 'selected' : ''}>${esc(b.code || '')} · ${esc(b.tech_name)} · ${dstr(b.ts)}</option>`).join('')}</select></label>
+  <label>Ano ang nangyari?<textarea id="rt" rows="5" maxlength="1000" placeholder="Ikuwento kung ano ang nangyari, kailan, at ano ang gusto mong mangyari.">${esc(RF.t)}</textarea></label>
+  <label class="fl">Larawan o file (hindi kailangan)<input type="file" id="rfi" accept="image/*,application/pdf,video/mp4,video/quicktime"></label>${RFILE ? `<p class="mute" style="font-size:13px;margin:4px 0">📎 ${esc(RFILE.name)} · ${fsize(RFILE.size)}</p>` : ''}
+  <p class="err" id="re" role="alert"></p><button class="btn" id="rs">Ipadala ang report</button>
+  <h2 style="margin-top:20px">Mga report mo</h2>${mine.length ? mine.map(x => `<div class="jb rpt"><div class="rph"><b>${esc(RCAT[x.cat] || x.cat)}</b>${rpill(x.status)}</div><small class="mute">${esc(x.code)} · ${dstr(tms(x.created_at))}${x.booking_id ? ' · booking ' + esc((TX.find(b => b.id == x.booking_id) || {}).code || '') : ''}</small><p style="margin:6px 0">${esc(x.body)}</p>${x.file ? `<a class="fdoc" data-rf="${esc(x.file.path)}" target="_blank" rel="noopener">📎 ${esc(x.file.name)}</a>` : ''}${x.admin_note ? `<div class="note"><b>Sagot ng CoolFix:</b> ${esc(x.admin_note)}</div>` : `<p class="mute" style="font-size:13px;margin:0">Sasagutin ka namin dito at sa notification.</p>`}</div>`).join('') : '<p class="mute">Wala ka pang report.</p>'}</div>`;
+  const keep = () => { RF = { cat: $("rc").value, b: $("rb").value, t: $("rt").value } };
+  ["rc", "rb", "rt"].forEach(i => $(i).oninput = keep);
+  $("rfi").onchange = e => { const f = e.target.files[0]; if (f && f.size > FMAX) { $("re").textContent = `Masyadong malaki ang file (hanggang ${FMAX / 1048576} MB).`; e.target.value = ''; return } RFILE = f || null; keep(); reportView() };
+  $("rs").onclick = async () => {
+    keep(); const t = RF.t.trim();
+    if (!RF.cat) { $("re").textContent = "Pumili kung tungkol saan ang report."; return }
+    if (t.length < 10) { $("re").textContent = "Ikuwento nang mas detalyado (hindi bababa sa 10 letra)."; return }
+    busy("rs", true); $("rs").textContent = "Ipinapadala…";
+    let file = null;
+    if (RFILE) { const ext = (RFILE.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5) || 'bin', path = `${USER.id}/${Date.now()}.${ext}`; const up = await sb.storage.from('reports').upload(path, RFILE, { contentType: RFILE.type || 'application/octet-stream' }); if (up.error) { busy("rs", false); $("rs").textContent = "Ipadala ang report"; $("re").textContent = "Hindi na-upload ang file: " + up.error.message; return } file = { path, name: RFILE.name.slice(0, 120), type: RFILE.type || '', size: RFILE.size } }
+    const { data, error } = await sb.from("reports").insert({ reporter_id: USER.id, cat: RF.cat, booking_id: RF.b ? +RF.b : null, body: t, file }).select().single();
+    busy("rs", false); $("rs").textContent = "Ipadala ang report";
+    if (error) { $("re").textContent = "Hindi naipadala: " + error.message; return }
+    if (!REPS.some(x => x.id == data.id)) REPS.unshift(data); RF = { cat: '', b: '', t: '' }; RFILE = null; reportView();
+    A.firstElementChild.insertAdjacentHTML("afterbegin", `<p class="note okt" role="status">Natanggap namin ang report mo (${esc(data.code)}). Sasagutin ka ng CoolFix team sa lalong madaling panahon.</p>`);
+  };
+  signFiles('reports', '[data-rf]', 'rf');
+}
+async function signFiles(bucket, sel, key) { for (const a of A.querySelectorAll(sel)) { const { data } = await sb.storage.from(bucket).createSignedUrl(a.dataset[key], 3600); if (data && a.isConnected) a.href = data.signedUrl } }
+let RPF = 'bago';
+function admRp() {
+  const who = id => (PROFILES.find(u => u.id == id) || {}), L = REPS.filter(x => RPF == 'lahat' || x.status == RPF);
+  A.innerHTML = `<div class="panel au wide"><h2>Mga report</h2><div class="chips">${[['bago', 'Bago'], ['inaasikaso', 'Inaasikaso'], ['naresolba', 'Naresolba'], ['lahat', 'Lahat']].map(([k, l]) => `<button class="chip" data-rpf="${k}" aria-pressed="${RPF == k}">${l} (${k == 'lahat' ? REPS.length : REPS.filter(x => x.status == k).length})</button>`).join('')}</div>
+  ${L.length ? L.map(x => { const u = who(x.reporter_id), b = TX.find(y => y.id == x.booking_id); return `<div class="jb rpt"><div class="rph"><b>${esc(RCAT[x.cat] || x.cat)}</b>${rpill(x.status)}</div><small class="mute">${esc(x.code)} · ${dstr(tms(x.created_at))} ${tlabel(x.created_at)} · ${esc(u.name || 'User')} (${u.role == 'technician' ? 'Technician' : 'Customer'})${u.phone ? ' · ' + esc(u.phone) : ''}${u.email ? ' · ' + esc(u.email) : ''}</small>
+    ${b ? `<p class="mute" style="font-size:13px;margin:4px 0">Booking ${esc(b.code)}: ${esc(b.svc)} · Tech: ${esc(b.tech_name)} · ${fmt(total(b))} · ${esc(b.st)}</p>` : ''}<p style="margin:6px 0;white-space:pre-wrap">${esc(x.body)}</p>${x.file ? `<a class="fdoc" data-rf="${esc(x.file.path)}" target="_blank" rel="noopener">📎 ${esc(x.file.name)}</a>` : ''}
+    <label>Sagot o tala para sa nag-report<textarea rows="2" maxlength="1000" id="an-${x.id}" placeholder="Makikita ito ng nag-report">${esc(x.admin_note)}</textarea></label>
+    <div class="row2">${x.status != 'inaasikaso' ? `<button class="btn alt" data-rpu="${x.id}" data-st="inaasikaso">Inaasikaso</button>` : `<button class="btn alt" data-rpu="${x.id}" data-st="inaasikaso">I-save ang sagot</button>`}${x.status != 'naresolba' ? `<button class="btn" data-rpu="${x.id}" data-st="naresolba">Naresolba na</button>` : `<button class="btn alt" data-rpu="${x.id}" data-st="inaasikaso">Buksan ulit</button>`}</div></div>` }).join('') : '<p class="mute">Walang report dito.</p>'}<p class="err" id="rpe" role="alert"></p></div>`;
+  A.querySelectorAll("[data-rpf]").forEach(b => b.onclick = () => { RPF = b.dataset.rpf; admRp() });
+  A.querySelectorAll("[data-rpu]").forEach(b => b.onclick = async () => {
+    const id = +b.dataset.rpu; b.disabled = true;
+    const { data, error } = await sb.from("reports").update({ status: b.dataset.st, admin_note: $("an-" + id).value.trim() }).eq("id", id).select().single();
+    if (error) { b.disabled = false; $("rpe").textContent = "Hindi na-save: " + error.message; return }
+    const i = REPS.findIndex(x => x.id == id); if (i >= 0) REPS[i] = data; tabsBar(); admRp();
+  });
+  signFiles('reports', '[data-rf]', 'rf');
+}
 async function loadSettings() {
   const { data } = await sb.from("settings").select("key,value");
   const m = Object.fromEntries((data || []).map(r => [r.key, r.value]));
@@ -247,6 +310,9 @@ function subscribe() {
       refresh("tech");
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "wallets" }, p => { const r = p.new; if (r && USER.role == "technician" && r.tech_id == USER.id) { WAL = r; loadWallet().then(() => refresh("wallet")) } })
+    .on("postgres_changes", { event: "*", schema: "public", table: "reports" }, p => { const r = p.new; if (!r || !r.id) return; const i = REPS.findIndex(x => x.id == r.id), o = i >= 0 ? REPS[i] : null; if (i >= 0) REPS[i] = r; else REPS.unshift(r);
+      if (USER.role != 'admin' && r.reporter_id == USER.id && o && (o.status != r.status || o.admin_note != r.admin_note)) { toast({ t: 'May update sa report mo ' + r.code, s: RPS[r.status] + (r.admin_note ? ' · ' + r.admin_note : ''), rep: r.id }); bell() }
+      tabsBar(); if (VIEW == 'cs') reportView(); else if (VIEW == 'admin' && TAB == 'rp') admRp() })
     .on("postgres_changes", { event: "*", schema: "public", table: "topups" }, p => { const r = p.new; if (!r) return; if (USER.role == "admin") { const i = TOPS.findIndex(x => x.id == r.id); if (i >= 0) TOPS[i] = r; else TOPS.unshift(r); tabsBar(); if (VIEW == "admin" && TAB == "wl") admWl() } else if (r.tech_id == USER.id) loadWallet().then(() => refresh("wallet")) })
     .subscribe();
 }
@@ -387,9 +453,9 @@ async function enter() {
   subscribe(); techPoll(); document.body.classList.toggle('adm', u.role == 'admin'); document.documentElement.style.background = u.role == 'admin' ? '#091233' : '';
   TAB = u.role == "customer" ? "find" : u.role == "admin" ? "ov" : "dash"; CUR = null;
   if (u.role == "customer") {
-    await Promise.all([loadTechs(), loadStats()]); show(); initGM();
+    await Promise.all([loadTechs(), loadStats(), loadReports()]); show(); initGM();
     getLoc().then(p => { if (p) { C = p; CK = true; TECHS.forEach(place); if (VIEW == "home") home(); if (GL) mapMe() } });
-  } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs(), loadTopups()]); show() }
+  } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs(), loadTopups(), loadReports()]); show() }
   else { await loadWallet(); syncWatch(); show() }
 }
 $("lo").onclick = async () => { stopWatch(); if (channel) sb.removeChannel(channel); channel = null; await sb.auth.signOut(); USER = null; TRACK = null; document.body.classList.remove("adm"); document.documentElement.style.background = ""; mode = "login"; role = "customer"; cat = null; CART = []; CT = null; FILES = {}; RE = false; authView() };
@@ -413,6 +479,7 @@ function notifs() {
       if (b.st == 'Kinansela') L.push({ id: b.id, ts: tms(b.updated_at), k: 'Kinansela', t: `Kinansela ni ${first(b.cust_name)} ang booking`, s: b.svc });
     }
   });
+  REPS.filter(x => x.reporter_id == USER.id && x.status != 'bago').forEach(x => L.push({ rep: x.id, ts: tms(x.updated_at), k: x.status == 'naresolba' ? 'Natapos' : 'Tinanggap', t: `Report ${x.code}: ${RPS[x.status]}`, s: x.admin_note || RCAT[x.cat] }));
   return L.sort((a, b) => b.ts - a.ts).slice(0, 30);
 }
 const nRead = () => { let v = +localStorage.getItem(NKEY()); if (!v) { v = Date.now(); localStorage.setItem(NKEY(), v) } return v };
@@ -425,6 +492,7 @@ function bell() {
   b.setAttribute('aria-label', n ? `Notification, ${n} bago` : 'Notification'); b.onclick = notifPanel;
 }
 function openNotif(n) {
+  if (n.rep) { TAB = 'cs'; CUR = null; show(); return }
   const b = TX.find(x => x.id == n.id); if (!b) return;
   if (USER.role == 'customer') { TAB = 'find'; TRACK = b; show() }
   else { TAB = 'dash'; CUR = null; show(); const c = $("job-" + b.id); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("flash"); setTimeout(() => c.classList.remove("flash"), 1500) } }
@@ -469,12 +537,12 @@ function toast(n) {
 }
 function tabList() {
   const c = USER.role == 'customer', ad = USER.role == 'admin';
-  return ad ? [['ov', 'Overview'], ['rq', 'Requirements'], ['wl', 'Wallet'], ['tx', 'Transaction'], ['tt', 'Technician'], ['sv', 'Serbisyo'], ['pr', 'Base price'], ['rg', 'Rate guide']] : c ? [['find', 'Hanapin'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']] : [['dash', 'Dashboard'], ['wl', 'Wallet'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']];
+  return ad ? [['ov', 'Overview'], ['rq', 'Requirements'], ['wl', 'Wallet'], ['tx', 'Transaction'], ['tt', 'Technician'], ['rp', 'Reports'], ['sv', 'Serbisyo'], ['pr', 'Base price'], ['rg', 'Rate guide']] : c ? [['find', 'Hanapin'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['cs', 'Report'], ['me', 'Account']] : [['dash', 'Dashboard'], ['wl', 'Wallet'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']];
 }
-const ICON = { ov: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>', rq: '<path d="M14 3H6v18h12V7zM14 3v4h4M9 13l2 2 4-4"/>', tx: '<path d="M4 6h16M4 12h16M4 18h10"/>', tt: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11l2 2 4-4"/>', sv: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>', pr: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01"/>', rg: '<path d="M4 4h12l4 4v12H4zM8 12h8M8 16h5"/>', wl: '<path d="M3 7h16v12H3zM3 7l12-4v4M15 13h2"/>' };
+const ICON = { cs: '<path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v6M12 16.5v.01"/>', rp: '<path d="M5 21V4h11l-1.5 4L16 12H5"/>', ov: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>', rq: '<path d="M14 3H6v18h12V7zM14 3v4h4M9 13l2 2 4-4"/>', tx: '<path d="M4 6h16M4 12h16M4 18h10"/>', tt: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11l2 2 4-4"/>', sv: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>', pr: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01"/>', rg: '<path d="M4 4h12l4 4v12H4zM8 12h8M8 16h5"/>', wl: '<path d="M3 7h16v12H3zM3 7l12-4v4M15 13h2"/>' };
 function tabsBar() {
   bell(); const nb = $('tabs'), ad = USER.role == 'admin'; nb.hidden = false;
-  nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${ICON[k] ? `<svg class="ti" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>` : ''}<span>${l}</span>${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}${k == 'rq' && PROFILES.some(u => u.role == 'technician' && u.doc_status == 'sinusuri') ? ' <i class="dot"></i>' : ''}${k == 'wl' && (ad ? TOPS.some(x => x.status == 'sinusuri') : wLow()) ? ' <i class="dot"></i>' : ''}</button>`).join('');
+  nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${ICON[k] ? `<svg class="ti" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>` : ''}<span>${l}</span>${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}${k == 'rq' && PROFILES.some(u => u.role == 'technician' && u.doc_status == 'sinusuri') ? ' <i class="dot"></i>' : ''}${k == 'rp' && REPS.some(x => x.status == 'bago') ? ' <i class="dot"></i>' : ''}${k == 'cs' && REPS.some(x => x.status != 'bago' && x.admin_note && tms(x.updated_at) > nRead()) ? ' <i class="dot"></i>' : ''}${k == 'wl' && (ad ? TOPS.some(x => x.status == 'sinusuri') : wLow()) ? ' <i class="dot"></i>' : ''}</button>`).join('');
   nb.querySelectorAll('button').forEach(b => b.onclick = () => { TAB = b.dataset.t; CUR = null; if (TAB == 'find') TRACK = null; show() });
 }
 function show() {
@@ -487,6 +555,7 @@ function show() {
   else if (ad) adminView();
   else if (TAB == 'chat') CUR ? chatView(1) : inbox();
   else if (TAB == 'me') profile();
+  else if (TAB == 'cs') reportView();
   else if (TAB == 'wl') walletView();
   else techDash();
 }
@@ -577,6 +646,7 @@ function calGrid(selK, info) {
 }
 const ocs = o => o.k == 'pct' ? '+' + o.p + '%' : o.k == 'custom' ? 'Custom quotation' : fmt(o.p);
 function pick(t) {
+  setTimeout(() => reviewsInto($("rvw"), t.id, first(t.n)), 0);
   if (!t) return;
   if (!CART.length) { sel = t; pins(); $("panel").insertAdjacentHTML("afterbegin", `<p class="note">Magdagdag muna ng serbisyo sa cart bago mag-book kay ${esc(first(t.n))}.</p>`); return }
   VIEW = "pick"; sel = t; pins();
@@ -592,7 +662,7 @@ function pick(t) {
  <label class="ck pay off"><input type="radio" name="pm" value="online" disabled> <span><b>Online sa app (GCash, Maya, card)</b><small>Malapit na</small></span></label>
  <p class="note wty">May <b>${WDAYS}-araw na warranty</b> ang trabahong naka-book at nabayaran ayon sa app. Huwag makipag-deal sa labas ng app para protektado ka.</p>
  <p class="err" id="be" role="alert"></p>
- <button class="btn" id="bk">I-book si ${esc(first(t.n))}</button>
+ <button class="btn" id="bk">I-book si ${esc(first(t.n))}</button><div id="rvw"></div>
  <button class="btn alt" id="mg">Mag-message kay ${esc(first(t.n))}</button>
  <button class="btn alt" id="bc">Bumalik at baguhin ang cart</button>`;
   const on = i => OC[i].a || !!document.querySelector(`[data-oc="${i}"]:checked`);
@@ -652,9 +722,10 @@ function trackView() {
  ${b.st == 'Natapos' ? doneBox(b) : `<p class="mute" style="font-size:13px;margin:4px 0 0">Bayad: <b>cash o GCash sa technician</b> pagkatapos ng trabaho. Ang halagang nasa app lang ang babayaran mo.</p>`}
  <button class="btn${b.q_status == 'hinihintay' ? ' alt' : ''}" id="tc">Mag-message sa technician</button>
  ${["Bago", "Tinanggap", "Papunta na"].includes(b.st) ? `<button class="btn alt" id="cx">Kanselahin ang booking</button>` : ""}
- <button class="btn alt" id="bh">Bumalik</button><p class="err" id="te" role="alert"></p>`;
+ <button class="btn alt" id="bh">Bumalik</button><p class="err" id="te" role="alert"></p><p class="mute" style="font-size:13px;text-align:center">May problema sa booking na ito? <button class="chip" id="trp">I-report sa CoolFix</button></p>`;
   $("tc").onclick = () => openChat(t);
   $("bh").onclick = () => { TRACK = null; home() };
+  if ($("trp")) $("trp").onclick = () => { RF = { ...RF, b: String(b.id) }; TAB = 'cs'; show() };
   if ($("cx")) $("cx").onclick = async () => { const r = await setStatus(b.id, 'Kinansela'); if (r) $("te").textContent = r };
   const rpc = async (fn, a, id) => { busy(id, true); const { error } = await sb.rpc(fn, a); if (error) { busy(id, false); $("te").textContent = "Hindi na-save: " + error.message; return } const { data } = await sb.from("bookings").select("*").eq("id", b.id).single(); if (data) { TRACK = upsertTx(data); trackView() } };
   if ($("qok")) $("qok").onclick = () => rpc("answer_quote", { bid: b.id, ok: true }, "qok");
@@ -782,7 +853,7 @@ function techDash() {
     : `<div class="jb doc ${ds}"><b>${noId && ds != "kulang" ? "Kailangan na rin ng Valid ID" : ds == "aprubado" ? "Palitan ang dokumento" : ds == "sinusuri" ? "Sinusuri na ng admin ang dokumento mo" : ds == "tinanggihan" ? "Hindi naaprubahan ang dokumento mo" : "Kailangan ng dokumento bago makatanggap ng booking"}</b>
     <p class="mute" style="margin:4px 0">${noId && ds != "kulang" ? `Bagong requirement ang valid ID para sa lahat ng technician. I-upload ito sa ibaba.${ds == "aprubado" ? " Susuriin ulit ito ng admin, kaya hindi ka muna makakapag-online hangga't hindi naaaprubahan." : ""}` : ds == "sinusuri" && !RE ? `${ctName(u.cert_type)} · ${REQ ? "Makakapag-online ka kapag naaprubahan na ng admin." : "Pwede ka nang mag-online habang sinusuri."}` : ds == "tinanggihan" ? `Dahilan: ${esc(u.doc_note || "—")}. Mag-upload ulit ng malinaw na kopya.` : ds == "aprubado" ? "Kapag nagpalit ka, susuriin ulit ito ng admin at hindi ka muna makakapag-online." : "I-upload ang valid ID at NC II certificate mo. Kung walang NC II, ang DTI Business Permit at BIR COR (Form 2303)."}</p>
     ${form ? `<div id="dz"></div><p class="err" id="dze" role="alert"></p><button class="btn" id="dsub">I-submit ang dokumento</button>${RE ? `<button class="btn alt" id="dcx">Huwag na</button>` : ""}` : `<button class="chip" id="reup">Palitan ang dokumento</button>`}</div>`;
-  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p><button type="button" class="olbar${u.online ? " on" : ""}" id="ol" role="switch" aria-checked="${!!u.online}" ${lock ? "disabled" : ""}><span class="old"></span><span class="nt"><b>${u.online ? "Online ka" : "Offline ka"}</b><small>${u.online ? "Nakikita ka ng mga customer at pwede kang ma-book. I-tap para mag-offline." : lock ? (!dlock ? `Kulang ang wallet mo (minimum ${fmt(WMIN)}). Mag-top up muna para makapag-online.` : ds == "sinusuri" ? "Hinihintay ang pag-apruba ng admin sa dokumento mo." : "I-upload muna ang dokumento sa ibaba para makapag-online.") : "Hindi ka nakikita ng mga customer. I-tap para mag-online."}</small></span><span class="sw" aria-hidden="true"><i></i></span></button>${docBox}${walletMini()}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><p class="err" id="de" role="alert"></p>${techCal(J)}<h3 style="margin:16px 0 4px">Mga aktibong booking</h3><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}${commBox(u)}<p class="err" id="pe" role="alert"></p></div>`;
+  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p><button type="button" class="olbar${u.online ? " on" : ""}" id="ol" role="switch" aria-checked="${!!u.online}" ${lock ? "disabled" : ""}><span class="old"></span><span class="nt"><b>${u.online ? "Online ka" : "Offline ka"}</b><small>${u.online ? "Nakikita ka ng mga customer at pwede kang ma-book. I-tap para mag-offline." : lock ? (!dlock ? `Kulang ang wallet mo (minimum ${fmt(WMIN)}). Mag-top up muna para makapag-online.` : ds == "sinusuri" ? "Hinihintay ang pag-apruba ng admin sa dokumento mo." : "I-upload muna ang dokumento sa ibaba para makapag-online.") : "Hindi ka nakikita ng mga customer. I-tap para mag-online."}</small></span><span class="sw" aria-hidden="true"><i></i></span></button>${docBox}${walletMini()}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><p class="err" id="de" role="alert"></p>${techCal(J)}<h3 style="margin:16px 0 4px">Mga aktibong booking</h3><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<div id="myrv"></div>${commBox(u)}<p class="err" id="pe" role="alert"></p></div>`;
   if ($("dz")) { if (!CT) CT = u.cert_type || null; mountDocs($("dz")) }
   if ($("reup")) $("reup").onclick = () => { RE = true; techDash() };
   if ($("dcx")) $("dcx").onclick = () => { RE = false; FILES = {}; techDash() };
@@ -811,7 +882,7 @@ function techDash() {
     const { data } = await sb.from("bookings").select("*").eq("id", id).single(); if (data) upsertTx(data); techDash();
   });
   A.querySelectorAll("[data-s]").forEach(b => b.onclick = async () => { b.disabled = true; const r = await setStatus(+b.dataset.b, b.dataset.s); if (r) { $("de").textContent = r; b.disabled = false } else if (b.dataset.s == 'Papunta na') { const j = TX.find(x => x.id == +b.dataset.b); if (j) techMap(j) } });
-  miniMaps(); bindComm();
+  miniMaps(); bindComm(); reviewsInto($("myrv"), u.id, null);
   A.querySelectorAll("[data-map]").forEach(b => b.onclick = () => { const j = TX.find(x => x.id == +b.dataset.map); if (j) techMap(j) });
   A.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { const j = TX.find(x => x.id == b.dataset.c); openChatWithCustomer(j) });
   A.querySelectorAll("#tcal [data-day]").forEach(b => b.onclick = () => { TD = b.dataset.day; techDash(); const c = $("tcal"); if (c) c.scrollIntoView({ block: "nearest" }) });
@@ -991,7 +1062,7 @@ function rateMarket() {
 }
 
 // ---------- Admin ----------
-function adminView() { VIEW = "admin"; TAB == 'ov' ? admOv() : TAB == 'rq' ? admRq() : TAB == 'tx' ? admTx() : TAB == 'sv' ? admSv() : TAB == 'pr' ? admPr() : TAB == 'wl' ? admWl() : admTc() }
+function adminView() { VIEW = "admin"; TAB == 'rp' ? admRp() : TAB == 'ov' ? admOv() : TAB == 'rq' ? admRq() : TAB == 'tx' ? admTx() : TAB == 'sv' ? admSv() : TAB == 'pr' ? admPr() : TAB == 'wl' ? admWl() : admTc() }
 let AP = 7;
 function admOv() {
   const DAY = 864e5, t0 = new Date(); t0.setHours(0, 0, 0, 0);
