@@ -232,7 +232,7 @@ async function start(session) {
 async function enter() {
   const u = USER; err = "";
   $("who").textContent = first(u.name) + " · " + (u.role == "customer" ? "Customer" : u.role == "admin" ? "Admin" : "Technician"); $("lo").hidden = false;
-  subscribe(); document.body.classList.toggle('adm', u.role == 'admin');
+  subscribe(); document.body.classList.toggle('adm', u.role == 'admin'); document.documentElement.style.background = u.role == 'admin' ? '#091233' : '';
   TAB = u.role == "customer" ? "find" : u.role == "admin" ? "ov" : "dash"; CUR = null;
   if (u.role == "customer") {
     await loadTechs(); show(); initGM();
@@ -240,7 +240,7 @@ async function enter() {
   } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs()]); show() }
   else { syncWatch(); show() }
 }
-$("lo").onclick = async () => { stopWatch(); if (channel) sb.removeChannel(channel); channel = null; await sb.auth.signOut(); USER = null; TRACK = null; document.body.classList.remove("adm"); mode = "login"; role = "customer"; cat = null; item = null; authView() };
+$("lo").onclick = async () => { stopWatch(); if (channel) sb.removeChannel(channel); channel = null; await sb.auth.signOut(); USER = null; TRACK = null; document.body.classList.remove("adm"); document.documentElement.style.background = ""; mode = "login"; role = "customer"; cat = null; item = null; authView() };
 
 // ---------- Navigation ----------
 const rk = () => USER.role == 'customer' ? 'c' : 't';
