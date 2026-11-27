@@ -54,6 +54,7 @@ const FILES={};window.__FILES=FILES;
 const storage={from:b=>({async upload(path,f){FILES[b+'/'+path]=f;return{data:{path},error:null}},async createSignedUrl(path){const f=FILES[b+'/'+path];return f?{data:{signedUrl:URL.createObjectURL(f)},error:null}:{data:null,error:{message:'not found'}}}})};
 window.__DB=DB;window.__users=users;
 window.supabase={createClient(){return{auth,storage,from:t=>new Q(t),
+ functions:{async invoke(fn,o){window.__INVOKED=[fn,o&&o.body];const r=window.__FN&&window.__FN[fn];return r?r(o&&o.body):{data:null,error:{message:'no fn',context:{json:async()=>({error:'Hindi pa naka-set up ang online na bayad.'})}}}}},
  async rpc(fn,a){if(!RPC[fn])return{data:null,error:{message:'no fn'}};try{return{data:RPC[fn](a||{})??null,error:null}}catch(e){return{data:null,error:{message:String(e)}}}},
  channel(){const ch={on(type,opt,cb){subs.push({table:opt.table,event:opt.event,cb});return ch},subscribe(){return ch}};return ch},removeChannel(){subs.length=0}}}};
 })();

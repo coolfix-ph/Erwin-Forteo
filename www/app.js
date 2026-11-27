@@ -14,7 +14,7 @@ const fee = a => Math.round(a * RATE);
 const gross = x => x.final_amt ?? ((x.amt || 0) + (x.extra_amt || 0));
 const comm = x => x.commission ?? Math.round(gross(x) * (x.rate ?? RATE * 100) / 100);
 // Tech Wallet (prepaid credits) at iba pang setting ng bayad.
-let WMIN = 200, WREQ = false, WDAYS = 30, TOPUP = { gcash: { name: '', number: '' }, maya: { name: '', number: '' } };
+let WMIN = 200, WREQ = false, PMON = false, PMRET = '', WDAYS = 30, TOPUP = { gcash: { name: '', number: '' }, maya: { name: '', number: '' } };
 let WAL = null, WTX = [], TOPS = [], STATS = {};
 const wLow = () => WREQ && (WAL ? WAL.balance : 0) < WMIN;
 const dstr = t => new Date(t).toLocaleDateString("en-PH", { month: "short", day: "numeric" });
@@ -236,6 +236,7 @@ async function loadSettings() {
   if (typeof m.commission_pct == "number" && m.commission_pct >= 0 && m.commission_pct <= 100) setRate(m.commission_pct);
   if (typeof m.wallet_min == "number") WMIN = Math.max(0, Math.round(m.wallet_min));
   WREQ = m.wallet_required === true;
+  PMON = m.paymongo_on === true;
   if (typeof m.warranty_days == "number") WDAYS = m.warranty_days;
   if (typeof m.fb_gc == "string") GC_LINK = m.fb_gc;
   if (typeof m.community_link == "string") COMM_LINK = m.community_link;
@@ -447,6 +448,8 @@ async function start(session) {
     console.error(e); USER = null; err = "May error habang naglo-load: " + (e.message || e); authView();
   } finally { starting = false }
 }
+// Pagbalik mula sa PayMongo checkout (?topup=ok o ?topup=cancel)
+{ const q = new URLSearchParams(location.search).get('topup'); if (q == 'ok' || q == 'cancel') { PMRET = q; history.replaceState(null, '', location.pathname) } }
 async function enter() {
   const u = USER; err = "";
   $("who").textContent = first(u.name) + " · " + (u.role == "customer" ? "Customer" : u.role == "admin" ? "Admin" : "Technician"); $("lo").hidden = false;
@@ -456,7 +459,7 @@ async function enter() {
     await Promise.all([loadTechs(), loadStats(), loadReports()]); show(); initGM();
     getLoc().then(p => { if (p) { C = p; CK = true; TECHS.forEach(place); if (VIEW == "home") home(); if (GL) mapMe() } });
   } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs(), loadTopups(), loadReports()]); show() }
-  else { await loadWallet(); syncWatch(); show() }
+  else { await loadWallet(); syncWatch(); if (PMRET) TAB = 'wl'; show(); if (PMRET) { const r = PMRET; PMRET = ''; A.firstElementChild.insertAdjacentHTML('afterbegin', r == 'ok' ? `<p class="note">Salamat! Papasok ang credits sa wallet mo sa loob ng ilang segundo, kapag nakumpirma na ng PayMongo ang bayad.</p>` : `<p class="note">Hindi natuloy ang bayad. Walang nabawas sa iyo. Pwede mong subukan ulit.</p>`) } }
 }
 $("lo").onclick = async () => { stopWatch(); if (channel) sb.removeChannel(channel); channel = null; await sb.auth.signOut(); USER = null; TRACK = null; document.body.classList.remove("adm"); document.documentElement.style.background = ""; mode = "login"; role = "customer"; cat = null; CART = []; CT = null; FILES = {}; RE = false; authView() };
 
@@ -892,7 +895,9 @@ function techDash() {
 // ---------- Tech Wallet ----------
 // Prepaid credits: dito ibinabawas ang commission at booking fee ng bawat cash na job. Hindi ito ma-withdraw.
 const WK = { topup: 'Top-up', commission: 'Commission', booking_fee: 'Booking fee', bonus: 'Bonus mula sa CoolFix', adjust: 'Adjustment' };
-const TST = { sinusuri: ['Sinusuri', 'wt'], aprubado: ['Pumasok na', 'ok'], tinanggihan: ['Tinanggihan', 'no'] };
+const TST = { sinusuri: ['Sinusuri', 'wt'], aprubado: ['Pumasok na', 'ok'], tinanggihan: ['Tinanggihan', 'no'], naghihintay: ['Hindi pa bayad', 'wt'], expired: ['Hindi natuloy', 'no'] };
+const TMTH = { gcash: 'GCash', maya: 'Maya', paymongo: 'Online' };
+const tmine = x => x.method != 'paymongo' || x.status != 'expired';
 const tpill = s => { const d = TST[s] || TST.sinusuri; return `<span class='pill ${d[1]}'>${d[0]}</span>` };
 function walletMini() {
   const b = WAL ? WAL.balance : 0, low = wLow(), pend = TOPS.filter(x => x.status == 'sinusuri').length;
@@ -905,16 +910,34 @@ function walletView() {
   <div class="wbig${low ? ' low' : ''}"><small>Balance (credits)</small><b>${fmt(b)}</b><span>${low ? `Kulang ang balance mo. Kailangan ng hindi bababa sa ${fmt(WMIN)} para makapag-online at makatanggap ng job.` : WREQ ? `Minimum na balance: ${fmt(WMIN)}` : 'Hindi pa required ang minimum balance.'}</span></div>
   <p class="mute" style="font-size:13px">Sa bawat <b>cash</b> na job na natapos, awtomatikong ibinabawas dito ang ${PCT} commission ng CoolFix at ang ${fmt(FEE)} booking fee na sinisingil mo sa customer. Credits ito para sa app at hindi ma-withdraw.</p>
   <h3 style="margin:16px 0 4px">Mag-top up</h3>
+  ${PMON ? `<div class="pmbox"><b>Bayad online</b><p class="mute" style="margin:2px 0 8px;font-size:13px">GCash, Maya o card. Awtomatikong papasok ang credits pagkabayad, hindi na kailangang hintayin ang admin.</p>
+  <div class="chips" role="group" aria-label="Halaga">${[200, 500, 1000, 2000].map(v => `<button type="button" class="chip" data-pa="${v}">${fmt(v)}</button>`).join('')}</div>
+  <label>Halaga (₱)<input type="number" id="pa" min="100" max="50000" step="1" inputmode="numeric" placeholder="hal. 500"></label>
+  <p class="err" id="pae" role="alert"></p><button class="btn" id="pas">Magbayad online</button></div>
+  ${ways.length ? `<h3 style="margin:16px 0 4px;font-size:15px">O kaya, magpadala at mag-upload ng resibo</h3>` : ''}` : ''}
   ${ways.length ? `<ol class="mute steps2"><li>Ipadala ang halaga sa ${ways.map(m => `<b>${m == 'gcash' ? 'GCash' : 'Maya'}</b>: ${acct(m)}`).join(' o ')}</li><li>Ilagay sa ibaba ang reference number at i-upload ang screenshot ng resibo.</li><li>Papasok ang credits kapag na-check na ng admin.</li></ol>
   <div class="chips" role="group" aria-label="Halaga">${[200, 500, 1000, 2000].map(v => `<button type="button" class="chip" data-ta="${v}">${fmt(v)}</button>`).join('')}</div>
   <label>Halaga (₱)<input type="number" id="ta" min="50" step="1" inputmode="numeric" placeholder="hal. 500"></label>
   <label>Paraan<select id="tmth">${ways.map(m => `<option value="${m}">${m == 'gcash' ? 'GCash' : 'Maya'}</option>`).join('')}</select></label>
   <label>Reference number<input id="tref" maxlength="40" placeholder="Nasa resibo ng GCash/Maya"></label>
   <label>Screenshot ng resibo<input type="file" id="tpf" accept="image/jpeg,image/png"></label>
-  <p class="err" id="tpe" role="alert"></p><button class="btn" id="tps">I-submit ang top-up</button>` : `<p class="note">Wala pang nakalagay na GCash o Maya number ng CoolFix para sa top-up. Makipag-ugnayan sa admin.</p>`}
-  ${TOPS.length ? `<h3 style="margin:18px 0 4px">Mga top-up mo</h3>${TOPS.map(x => `<div class="row"><span>${fmt(x.amt)} · ${x.method == 'gcash' ? 'GCash' : 'Maya'}<br><small class="mute">Ref ${esc(x.ref)} · ${dstr(x.created_at)}${x.status == 'tinanggihan' && x.note ? ' · ' + esc(x.note) : ''}</small></span>${tpill(x.status)}</div>`).join('')}` : ''}
+  <p class="err" id="tpe" role="alert"></p><button class="btn" id="tps">I-submit ang top-up</button>` : PMON ? '' : `<p class="note">Wala pang nakalagay na GCash o Maya number ng CoolFix para sa top-up. Makipag-ugnayan sa admin.</p>`}
+  ${TOPS.filter(tmine).length ? `<h3 style="margin:18px 0 4px">Mga top-up mo</h3>${TOPS.filter(tmine).map(x => `<div class="row"><span>${fmt(x.amt)} · ${TMTH[x.method] || x.method}${x.paid_with ? ' (' + esc(TMTH[x.paid_with] || x.paid_with) + ')' : ''}<br><small class="mute">${x.method == 'paymongo' ? 'PayMongo' : 'Ref ' + esc(x.ref)} · ${dstr(x.created_at)}${x.status == 'tinanggihan' && x.note ? ' · ' + esc(x.note) : ''}</small></span>${tpill(x.status)}</div>`).join('')}` : ''}
   <h3 style="margin:18px 0 4px">Mga galaw ng wallet</h3>${WTX.length ? WTX.map(x => `<div class="row"><span>${esc(WK[x.kind] || x.kind)}<br><small class="mute">${esc(x.note)} · ${dstr(x.created_at)}</small></span><span style="text-align:right"><b class="${x.amt < 0 ? 'neg' : 'pos'}">${x.amt < 0 ? '−' : '+'}${fmt(Math.abs(x.amt))}</b><br><small class="mute">${fmt(x.balance_after)}</small></span></div>`).join('') : '<p class="mute">Wala pang galaw. Lalabas dito ang mga top-up at ang commission na ibinawas.</p>'}</div>`;
   A.querySelectorAll("[data-ta]").forEach(x => x.onclick = () => { $("ta").value = x.dataset.ta });
+  A.querySelectorAll("[data-pa]").forEach(x => x.onclick = () => { $("pa").value = x.dataset.pa });
+  if ($("pas")) $("pas").onclick = async () => {
+    const a = Math.round(Number($("pa").value)), e = $("pae");
+    if (!(a >= 100 && a <= 50000)) return e.textContent = "Ilagay ang halaga (₱100 hanggang ₱50,000).";
+    e.textContent = ""; busy("pas", true); $("pas").textContent = "Binubuksan ang PayMongo…";
+    const { data, error } = await sb.functions.invoke("paymongo-checkout", { body: { amt: a } });
+    let msg = data && data.error;
+    if (error) { msg = "Hindi makakonekta. Subukan ulit."; try { const j = await error.context.json(); if (j && j.error) msg = j.error } catch (_) { } }
+    if (msg || !data || !data.checkout_url) { busy("pas", false); $("pas").textContent = "Magbayad online"; return e.textContent = msg || "Hindi makakonekta. Subukan ulit." }
+    location.href = data.checkout_url;
+    // Kung bumalik gamit ang Back, gumagana ulit ang button
+    setTimeout(() => { if ($("pas")) { busy("pas", false); $("pas").textContent = "Magbayad online" } }, 4000);
+  };
   if (!$("tps")) return;
   $("tps").onclick = async () => {
     const a = Math.round(Number($("ta").value)), m = $("tmth").value, ref = $("tref").value.trim(), f = $("tpf").files[0], e = $("tpe");
@@ -1151,8 +1174,8 @@ async function loadTopups() {
 }
 function admWl() {
   VIEW = "admin"; const nm = id => (PROFILES.find(p => p.id == id) || {}).name || 'Technician', bal = id => (WALS.find(w => w.tech_id == id) || {}).balance || 0;
-  const pend = TOPS.filter(x => x.status == 'sinusuri'), done = TOPS.filter(x => x.status != 'sinusuri').slice(0, 20), T = PROFILES.filter(u => u.role == 'technician').sort((a, b) => bal(a.id) - bal(b.id));
-  const mth = m => m == 'gcash' ? 'GCash' : 'Maya', E = x => esc(String(x ?? ''));
+  const pend = TOPS.filter(x => x.status == 'sinusuri'), done = TOPS.filter(x => ['aprubado', 'tinanggihan'].includes(x.status)).slice(0, 20), T = PROFILES.filter(u => u.role == 'technician').sort((a, b) => bal(a.id) - bal(b.id));
+  const mth = m => TMTH[m] || m, E = x => esc(String(x ?? ''));
   A.innerHTML = `<div class='dash'><div class='dh'><div><h2>Wallet ng mga technician</h2><p class='mute'>Prepaid credits para sa commission ng cash na job. Suriin ang top-up bago aprubahan: tingnan kung pumasok talaga ang pera sa GCash/Maya ng CoolFix.</p></div></div>
   <section class='card'><div class='ch'><h3>Mga top-up na naghihintay</h3><span class='mute'>${pend.length}</span></div>
   ${pend.length ? pend.map(x => `<div class='tpr'><div class='dv' data-tp='${x.id}'><span class='mute'>Naglo-load…</span></div><div><b>${E(nm(x.tech_id))}</b><p style='margin:2px 0'><b>${fmt(x.amt)}</b> · ${mth(x.method)} · Ref <b>${E(x.ref)}</b></p><small class='mute'>${dstr(x.created_at)} · ${tlabel(x.created_at)} · Balance ngayon: ${fmt(bal(x.tech_id))}</small>
@@ -1167,12 +1190,13 @@ function admWl() {
    <label class='prow'><span>Minimum na balance</span><span>₱ <input type='number' id='wmin' min='0' step='50' value='${WMIN}'></span></label>
    <label class='prow'><span>Commission ng CoolFix</span><span><input type='number' id='wpct' min='0' max='50' step='1' value='${Math.round(RATE * 100)}'> %</span></label>
    <label class='prow'><span>Warranty (araw)</span><span><input type='number' id='wday' min='0' max='365' step='1' value='${WDAYS}'></span></label>
-   <p class='gh'>Saan magpapadala ng top-up ang technician</p>
+   <label class='ck'><input type='checkbox' id='pmon' ${PMON ? 'checked' : ''}> Online na top-up gamit ang PayMongo (GCash, Maya, card). Awtomatikong pumapasok ang credits.</label>
+   <p class='gh'>Saan magpapadala ng top-up ang technician (mano-mano, may resibo)</p>
    ${['gcash', 'maya'].map(m => `<div class='row2'><label style='flex:1'>${mth(m)} number<input id='n_${m}' inputmode='tel' value='${E(TOPUP[m] && TOPUP[m].number)}' placeholder='09XXXXXXXXX'></label><label style='flex:1'>Account name<input id='a_${m}' value='${E(TOPUP[m] && TOPUP[m].name)}' placeholder='hal. CoolFix'></label></div>`).join('')}
    <p class='mute' id='wse' role='status'></p><button class='btn' id='wss'>I-save</button>
    <p class='mute' style='font-size:12px'>Ang bagong commission % ay para lang sa mga bagong booking.</p>
   </section></div>
-  ${done.length ? `<section class='card'><div class='ch'><h3>Mga nasuring top-up</h3></div>${done.map(x => `<div class='li'><div><b>${E(nm(x.tech_id))}</b><small>${fmt(x.amt)} · ${mth(x.method)} · Ref ${E(x.ref)} · ${dstr(x.created_at)}${x.note ? ' · ' + E(x.note) : ''}</small></div><div class='km'>${tpill(x.status)}</div></div>`).join('')}</section>` : ''}</div>`;
+  ${done.length ? `<section class='card'><div class='ch'><h3>Mga nasuring top-up</h3></div>${done.map(x => `<div class='li'><div><b>${E(nm(x.tech_id))}</b><small>${fmt(x.amt)} · ${mth(x.method)}${x.paid_with ? ' (' + E(mth(x.paid_with)) + ')' : ''} · ${x.method == 'paymongo' ? 'PayMongo, awtomatiko' : 'Ref ' + E(x.ref)} · ${dstr(x.created_at)}${x.note ? ' · ' + E(x.note) : ''}</small></div><div class='km'>${tpill(x.status)}</div></div>`).join('')}</section>` : ''}</div>`;
   // Litrato ng resibo (pansamantalang link)
   (async () => { for (const el of [...A.querySelectorAll('[data-tp]')]) { const x = TOPS.find(t => t.id == el.dataset.tp); if (!x || !x.proof) { el.innerHTML = `<span class='mute'>Walang screenshot</span>`; continue } const { data } = await sb.storage.from('topup-proofs').createSignedUrl(x.proof, 600); if (!el.isConnected) return; const u = data && data.signedUrl; el.innerHTML = u ? `<a href='${esc(u)}' target='_blank' rel='noopener'><img src='${esc(u)}' alt='Resibo ng top-up ni ${esc(nm(x.tech_id))}'></a>` : `<span class='err'>Hindi mabuksan</span>` } })();
   const review = async (id, ok) => {
@@ -1199,9 +1223,9 @@ function admWl() {
     if (!(mn >= 0) || !(pc >= 0 && pc <= 50) || !(dy >= 0 && dy <= 365)) { e.className = 'err'; e.textContent = 'Ayusin ang mga numero (commission 0 hanggang 50%).'; return }
     const ti = {}; let bad = ''; ['gcash', 'maya'].forEach(m => { const num = normPhone($('n_' + m).value); if ($('n_' + m).value.trim() && num.length != 11) bad = `Mali ang ${mth(m)} number.`; ti[m] = { number: $('n_' + m).value.trim() ? num : '', name: $('a_' + m).value.trim() } });
     if (bad) { e.className = 'err'; e.textContent = bad; return }
-    const er = await saveSetting('wallet_required', $('wreq').checked) || await saveSetting('wallet_min', mn) || await saveSetting('commission_pct', pc) || await saveSetting('warranty_days', dy) || await saveSetting('topup_info', ti);
+    const er = await saveSetting('wallet_required', $('wreq').checked) || await saveSetting('wallet_min', mn) || await saveSetting('commission_pct', pc) || await saveSetting('warranty_days', dy) || await saveSetting('topup_info', ti) || await saveSetting('paymongo_on', $('pmon').checked);
     if (er) { e.className = 'err'; e.textContent = 'Hindi na-save: ' + er.message; return }
-    WREQ = $('wreq').checked; WMIN = mn; setRate(pc); WDAYS = dy; TOPUP = ti; admWl(); const e2 = $('wse'); e2.className = 'mute'; e2.textContent = 'Na-save na.';
+    WREQ = $('wreq').checked; PMON = $('pmon').checked; WMIN = mn; setRate(pc); WDAYS = dy; TOPUP = ti; admWl(); const e2 = $('wse'); e2.className = 'mute'; e2.textContent = 'Na-save na.';
   };
 }
 // Mga requirement: litrato o PDF ng bawat dokumento, gamit ang pansamantalang link (10 minuto).
