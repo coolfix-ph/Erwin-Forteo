@@ -37,7 +37,7 @@ const ok = (c, m) => { if (!c) throw new Error("FAIL: " + m); console.log("ok -"
   await p.click("#tc"); await p.waitForTimeout(300); await p.fill("#mi", "Hello po"); await p.click("#sn"); await p.waitForTimeout(300);
   ok((await p.textContent("#ms")).includes("Hello po"), "customer can send a message");
   await p.click("#lo"); await p.fill("#f_e", "rodel@test.com"); await p.fill("#f_w", "password123"); await p.click("#go"); await p.waitForTimeout(500);
-  for (const s of ["Papunta na", "Dumating na", "Natapos"]) { await p.click(`[data-s="${s}"]`); await p.waitForTimeout(300) }
+  for (const s of ["Papunta na", "Dumating na", "Natapos"]) { await p.click(`[data-s="${s}"]`); await p.waitForTimeout(300); if (s == "Papunta na") { ok(await p.isVisible(".tmap"), "map guide opens when the technician accepts"); await p.click("#tmx") } }
   ok(await p.evaluate(() => __DB.bookings[0].status) == "Natapos", "technician completes the job");
   await p.click("#lo"); await p.fill("#f_e", "maria@test.com"); await p.fill("#f_w", "bad"); await p.click("#go"); await p.waitForTimeout(200);
   ok((await p.textContent("#er")).includes("Mali"), "wrong password is rejected");
