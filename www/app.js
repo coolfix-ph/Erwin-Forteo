@@ -4,9 +4,17 @@ const $ = id => document.getElementById(id);
 const A = $("auth");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = n => "₱" + Number(n || 0).toLocaleString("en-PH");
-// Komisyon ng CoolFix: fixed na 20% ng bayad sa serbisyo (hindi kasama ang booking fee).
-const RATE = .2, PCT = Math.round(RATE * 100) + '%', TPCT = Math.round((1 - RATE) * 100) + '%';
+// Komisyon ng CoolFix: % ng bayad sa serbisyo (hindi kasama ang booking fee). Galing sa settings (commission_pct).
+let RATE = .2, PCT = '20%', TPCT = '80%';
+const setRate = p => { RATE = p / 100; PCT = Math.round(p) + '%'; TPCT = Math.round(100 - p) + '%' };
 const fee = a => Math.round(a * RATE);
+// Bayad sa serbisyo ng isang booking: base + aprubadong quote. Ang commission ay itinatala ng server pagka-Natapos.
+const gross = x => x.final_amt ?? ((x.amt || 0) + (x.extra_amt || 0));
+const comm = x => x.commission ?? Math.round(gross(x) * (x.rate ?? RATE * 100) / 100);
+// Tech Wallet (prepaid credits) at iba pang setting ng bayad.
+let WMIN = 200, WREQ = false, WDAYS = 30, TOPUP = { gcash: { name: '', number: '' }, maya: { name: '', number: '' } };
+let WAL = null, WTX = [], TOPS = [], STATS = {};
+const wLow = () => WREQ && (WAL ? WAL.balance : 0) < WMIN;
 const dstr = t => new Date(t).toLocaleDateString("en-PH", { month: "short", day: "numeric" });
 const tm = t => new Date(t).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
 const cl = x => JSON.parse(JSON.stringify(x));
@@ -45,7 +53,7 @@ let FEE = 49, NC2 = [...DEFNC2];
 const isNC2 = it => !!it && (/^aircon install/i.test(it.t || '') || NC2.some(x => (it.t + ': ' + it.n).toLowerCase().includes(String(x).toLowerCase())));
 const certified = t => t && t.cert == 'nc2' && t.ds == 'aprubado';
 const CERT = `<span class="cert" title="May aprubadong NC II certificate"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M12 2l2.6 2.2 3.4-.3.9 3.3 2.9 1.8-1.3 3.2 1.3 3.2-2.9 1.8-.9 3.3-3.4-.3L12 22l-2.6-2.2-3.4.3-.9-3.3-2.9-1.8L3.5 12 2.2 8.8l2.9-1.8.9-3.3 3.4.3z" fill="currentColor"/><path d="M8 12.5l2.6 2.5L16 9.5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>NC II Certified</span>`;
-const total = b => (b.amt || 0) + (b.booking_fee || 0);
+const total = b => gross(b) + (b.booking_fee || 0);
 
 // ---------- Technician documents (NC II, o DTI Permit + BIR COR) ----------
 const DOCS = { vid: 'Valid ID', nc2: 'NC II Certificate', dti: 'DTI Business Permit', bir: 'BIR COR (Form 2303)' };
@@ -124,7 +132,24 @@ async function loadSettings() {
   REQ = m.require_doc_approval !== false;
   if (typeof m.booking_fee == "number" && m.booking_fee >= 0) FEE = Math.round(m.booking_fee);
   if (Array.isArray(m.nc2_only)) NC2 = m.nc2_only;
+  if (typeof m.commission_pct == "number" && m.commission_pct >= 0 && m.commission_pct <= 100) setRate(m.commission_pct);
+  if (typeof m.wallet_min == "number") WMIN = Math.max(0, Math.round(m.wallet_min));
+  WREQ = m.wallet_required === true;
+  if (typeof m.warranty_days == "number") WDAYS = m.warranty_days;
+  if (m.topup_info && typeof m.topup_info == "object") TOPUP = { gcash: { name: '', number: '' }, maya: { name: '', number: '' }, ...m.topup_info };
 }
+// Wallet ng technician: balance, mga galaw, at mga top-up request.
+async function loadWallet() {
+  const id = USER.id;
+  const [w, t, p] = await Promise.all([sb.from("wallets").select("*").eq("tech_id", id), sb.from("wallet_tx").select("*").eq("tech_id", id).order("created_at", { ascending: false }).limit(50), sb.from("topups").select("*").eq("tech_id", id).order("created_at", { ascending: false }).limit(20)]);
+  WAL = (w.data && w.data[0]) || { tech_id: id, balance: 0 }; WTX = t.data || []; TOPS = p.data || [];
+}
+// Rating at bilang ng natapos na job ng mga technician.
+async function loadStats() {
+  if (!sb.rpc) return; const { data } = await sb.rpc("tech_stats");
+  STATS = Object.fromEntries((data || []).map(r => [r.tech_id, r]));
+}
+const stars = id => { const s = STATS[id]; return s && s.reviews ? `<span class="star" title="${s.reviews} rating">★ ${Number(s.rating).toFixed(1)} <small>(${s.reviews})</small></span>` : '' };
 async function saveSetting(key, value) {
   const { error } = await sb.from("settings").upsert({ key, value, updated_at: new Date().toISOString() });
   return error;
@@ -153,7 +178,7 @@ async function loadProfiles() { const { data } = await sb.from("profiles").selec
 function subscribe() {
   if (channel) sb.removeChannel(channel);
   channel = sb.channel("coolfix-" + USER.id)
-    .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, p => { if (p.new && p.new.id) { const pr = TX.find(x => x.id == p.new.id), was = pr && pr.st, b = upsertTx(p.new); liveNote(b, pr ? was : null); onBooking(b) } })
+    .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, p => { if (p.new && p.new.id) { const pr = TX.find(x => x.id == p.new.id), was = pr && pr.st, wq = pr && pr.q_status, b = upsertTx(p.new); liveNote(b, pr ? was : null, wq); onBooking(b) } })
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, async p => {
       const m = p.new, c = CONVS.find(x => x.id == m.conv_id);
       if (!c) { await loadConvs() } else if (!c.m.some(x => x.id == m.id)) c.m.push({ id: m.id, f: m.sender, t: m.body, ts: new Date(m.created_at).getTime() });
@@ -169,6 +194,8 @@ function subscribe() {
       if (TRACK && TRACK.tech_id == r.id) { const t = i >= 0 ? TECHS[i] : toTech(r); Object.assign(t, toTech(r)) }
       refresh("tech");
     })
+    .on("postgres_changes", { event: "*", schema: "public", table: "wallets" }, p => { const r = p.new; if (r && USER.role == "technician" && r.tech_id == USER.id) { WAL = r; loadWallet().then(() => refresh("wallet")) } })
+    .on("postgres_changes", { event: "*", schema: "public", table: "topups" }, p => { const r = p.new; if (!r) return; if (USER.role == "admin") { const i = TOPS.findIndex(x => x.id == r.id); if (i >= 0) TOPS[i] = r; else TOPS.unshift(r); tabsBar(); if (VIEW == "admin" && TAB == "wl") admWl() } else if (r.tech_id == USER.id) loadWallet().then(() => refresh("wallet")) })
     .subscribe();
 }
 function onBooking(b) {
@@ -183,6 +210,7 @@ function refresh(kind) {
   if (VIEW == "chat" && kind == "msg") chatView();
   else if (VIEW == "inbox" && kind == "msg") inbox();
   else if (VIEW == "dash" && kind != "tech") techDash();
+  else if (VIEW == "wallet" && kind == "wallet") walletView();
   else if (VIEW == "track" && kind != "msg") trackView();
   else if (VIEW == "home" && kind == "tech") home();
   else if (VIEW == "home") homeStats();
@@ -307,10 +335,10 @@ async function enter() {
   subscribe(); document.body.classList.toggle('adm', u.role == 'admin'); document.documentElement.style.background = u.role == 'admin' ? '#091233' : '';
   TAB = u.role == "customer" ? "find" : u.role == "admin" ? "ov" : "dash"; CUR = null;
   if (u.role == "customer") {
-    await loadTechs(); show(); initGM();
+    await Promise.all([loadTechs(), loadStats()]); show(); initGM();
     getLoc().then(p => { if (p) { C = p; TECHS.forEach(place); if (VIEW == "home") home(); if (GL) mapMe() } });
-  } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs()]); show() }
-  else { syncWatch(); show() }
+  } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs(), loadTopups()]); show() }
+  else { await loadWallet(); syncWatch(); show() }
 }
 $("lo").onclick = async () => { stopWatch(); if (channel) sb.removeChannel(channel); channel = null; await sb.auth.signOut(); USER = null; TRACK = null; document.body.classList.remove("adm"); document.documentElement.style.background = ""; mode = "login"; role = "customer"; cat = null; CART = []; CT = null; FILES = {}; RE = false; authView() };
 
@@ -364,13 +392,16 @@ function notifPanel() {
   d.querySelectorAll("[data-n]").forEach(b => b.onclick = () => { close(); openNotif(L[b.dataset.n]) });
 }
 // Alerto habang bukas ang app: banner sa itaas, tunog, vibrate, at notification ng device kung pinayagan.
-function liveNote(b, was) {
+function liveNote(b, was, wq) {
   if (!USER || USER.role == 'admin') return;
-  let n = null;
+  let n = null; const qch = wq != null && wq != b.q_status;
   if (USER.role == 'technician' && b.tech_id == USER.id) {
     if (was == null && b.st == 'Bago') n = { t: `Bagong booking mula kay ${first(b.cust_name)}`, s: b.svc + ' · ' + (b.sched_at ? bWhen(b) : 'Ngayon na') };
     else if (b.st == 'Kinansela' && was != 'Kinansela') n = { t: `Kinansela ni ${first(b.cust_name)} ang booking`, s: b.svc };
-  } else if (USER.role == 'customer' && b.customer_id == USER.id && was != b.st && NMSG[b.st]) n = { t: NMSG[b.st](b), s: b.svc };
+    else if (qch && b.q_status == 'aprubado') n = { t: `Inaprubahan ni ${first(b.cust_name)} ang quote mo`, s: `Bagong total: ${fmt(total(b))}` };
+    else if (qch && b.q_status == 'tinanggihan') n = { t: `Hindi inaprubahan ni ${first(b.cust_name)} ang quote`, s: `${fmt(b.q_amt)} · ${b.q_note}` };
+  } else if (USER.role == 'customer' && b.customer_id == USER.id && qch && b.q_status == 'hinihintay') n = { t: `May quote si ${first(b.tech_name)}: +${fmt(b.q_amt)}`, s: b.q_note + ' · Buksan para aprubahan o tanggihan' };
+  else if (USER.role == 'customer' && b.customer_id == USER.id && was != b.st && NMSG[b.st]) n = { t: NMSG[b.st](b), s: b.svc };
   if (!n) return;
   n.id = b.id; toast(n); bell();
   try { const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain(); o.frequency.value = 880; o.connect(g); g.connect(a.destination); g.gain.setValueAtTime(.15, a.currentTime); g.gain.exponentialRampToValueAtTime(.001, a.currentTime + .4); o.start(); o.stop(a.currentTime + .4) } catch (e) { }
@@ -386,12 +417,12 @@ function toast(n) {
 }
 function tabList() {
   const c = USER.role == 'customer', ad = USER.role == 'admin';
-  return ad ? [['ov', 'Overview'], ['rq', 'Requirements'], ['tx', 'Transaction'], ['tt', 'Technician'], ['sv', 'Serbisyo'], ['pr', 'Base price'], ['rg', 'Rate guide']] : c ? [['find', 'Hanapin'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']] : [['dash', 'Dashboard'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']];
+  return ad ? [['ov', 'Overview'], ['rq', 'Requirements'], ['wl', 'Wallet'], ['tx', 'Transaction'], ['tt', 'Technician'], ['sv', 'Serbisyo'], ['pr', 'Base price'], ['rg', 'Rate guide']] : c ? [['find', 'Hanapin'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']] : [['dash', 'Dashboard'], ['wl', 'Wallet'], ['rg', 'Rate guide'], ['chat', 'Mensahe'], ['me', 'Account']];
 }
-const ICON = { ov: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>', rq: '<path d="M14 3H6v18h12V7zM14 3v4h4M9 13l2 2 4-4"/>', tx: '<path d="M4 6h16M4 12h16M4 18h10"/>', tt: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11l2 2 4-4"/>', sv: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>', pr: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01"/>', rg: '<path d="M4 4h12l4 4v12H4zM8 12h8M8 16h5"/>' };
+const ICON = { ov: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>', rq: '<path d="M14 3H6v18h12V7zM14 3v4h4M9 13l2 2 4-4"/>', tx: '<path d="M4 6h16M4 12h16M4 18h10"/>', tt: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11l2 2 4-4"/>', sv: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>', pr: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01"/>', rg: '<path d="M4 4h12l4 4v12H4zM8 12h8M8 16h5"/>', wl: '<path d="M3 7h16v12H3zM3 7l12-4v4M15 13h2"/>' };
 function tabsBar() {
-  bell(); const nb = $('tabs'); nb.hidden = false;
-  nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${ICON[k] ? `<svg class="ti" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>` : ''}<span>${l}</span>${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}${k == 'rq' && PROFILES.some(u => u.role == 'technician' && u.doc_status == 'sinusuri') ? ' <i class="dot"></i>' : ''}</button>`).join('');
+  bell(); const nb = $('tabs'), ad = USER.role == 'admin'; nb.hidden = false;
+  nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${ICON[k] ? `<svg class="ti" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>` : ''}<span>${l}</span>${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}${k == 'rq' && PROFILES.some(u => u.role == 'technician' && u.doc_status == 'sinusuri') ? ' <i class="dot"></i>' : ''}${k == 'wl' && (ad ? TOPS.some(x => x.status == 'sinusuri') : wLow()) ? ' <i class="dot"></i>' : ''}</button>`).join('');
   nb.querySelectorAll('button').forEach(b => b.onclick = () => { TAB = b.dataset.t; CUR = null; if (TAB == 'find') TRACK = null; show() });
 }
 function show() {
@@ -404,6 +435,7 @@ function show() {
   else if (ad) adminView();
   else if (TAB == 'chat') CUR ? chatView(1) : inbox();
   else if (TAB == 'me') profile();
+  else if (TAB == 'wl') walletView();
   else techDash();
 }
 
@@ -435,9 +467,9 @@ function home() {
   VIEW = "home"; $("app").hidden = false; A.hidden = true;
   if (GL) gClear(); $("route").innerHTML = ""; sel = null;
   pins();
-  const L = list(), act = myBookings().filter(x => ACTIVE.includes(x.st)), inCart = (c, x) => CART.find(y => y.c == c.k && y.n == x[0]);
-  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}"><div class="av">${esc(ini(t.n))}</div><div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}<small>${esc(t.s.join(', '))}</small></div><div class="km">${dist(t).toFixed(1)} km<small>~${eta(t)} min</small><span class="bkp">I-book</span></div></button>`).join("") || `<p class="mute">Wala pang online na technician na kaya ${CART.length > 1 ? 'lahat ng nasa cart mo' : 'ang serbisyong ito'}. ${CART.length > 1 ? 'Subukang hatiin sa dalawang booking, o ' : ''}subukan ulit mamaya.</p>`;
-  const hd = `<div class='hello'><b>Kumusta, ${esc(first(USER.name))}!</b><span>${TECHS.filter(t => t.online).length} technician ang online ngayon</span></div><div class='stats' id='hstats'>${statsHtml()}</div>${act.length ? `<p class="note">May aktibo kang booking. <button class="chip" id="ab">Tingnan</button></p>` : ""}`;
+  const L = list(), act = myBookings().filter(x => ACTIVE.includes(x.st)), unr = myBookings().find(x => x.st == 'Natapos' && !x.rating && Date.now() - tms(x.done_at || x.updated_at) < 7 * 864e5), inCart = (c, x) => CART.find(y => y.c == c.k && y.n == x[0]);
+  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}"><div class="av">${esc(ini(t.n))}</div><div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}${stars(t.id)}<small>${esc(t.s.join(', '))}</small></div><div class="km">${dist(t).toFixed(1)} km<small>~${eta(t)} min</small><span class="bkp">I-book</span></div></button>`).join("") || `<p class="mute">Wala pang online na technician na kaya ${CART.length > 1 ? 'lahat ng nasa cart mo' : 'ang serbisyong ito'}. ${CART.length > 1 ? 'Subukang hatiin sa dalawang booking, o ' : ''}subukan ulit mamaya.</p>`;
+  const hd = `<div class='hello'><b>Kumusta, ${esc(first(USER.name))}!</b><span>${TECHS.filter(t => t.online).length} technician ang online ngayon</span></div><div class='stats' id='hstats'>${statsHtml()}</div>${act.length ? `<p class="note">May aktibo kang booking. <button class="chip" id="ab">Tingnan</button></p>` : unr ? `<p class="note">Paano ang serbisyo ni ${esc(first(unr.tech_name))}? <button class="chip" id="rtb">I-rate</button></p>` : ""}`;
   let body;
   if (!cat) body = `<h2>${CART.length ? 'Magdagdag pa ng serbisyo' : 'Anong serbisyo ang kailangan mo?'}</h2><div class="cats">${CAT.map((c, i) => `<button class="cat" data-c="${i}"><b>${esc(c.t)}</b><small>${esc(c.d)}</small></button>`).join("")}</div><p class="mute" style="font-size:13px">Pwedeng magdagdag ng ilang serbisyo sa iisang booking. Tingnan ang <b>Rate guide</b> para sa lahat ng presyo.</p>`;
   else body = `<button class="chip" id="cb">‹ Lahat ng serbisyo</button><h2 style="margin:10px 0 2px">${esc(cat.t)}</h2><p class="mute" style="margin:0 0 4px;font-size:13px">${esc(cat.n)} I-tap para idagdag sa cart.</p>
@@ -451,6 +483,7 @@ function home() {
   if ($("bkgo")) $("bkgo").onclick = goT;
   if ($("gocart")) $("gocart").onclick = () => L.length ? goT() : $("cart").scrollIntoView({ behavior: "smooth", block: "start" });
   if ($("ab")) $("ab").onclick = () => { TRACK = act[0]; trackView() };
+  if ($("rtb")) $("rtb").onclick = () => { TRACK = unr; trackView() };
   document.querySelectorAll(".cat").forEach(b => b.onclick = () => { cat = CAT[b.dataset.c]; home() });
   if (cat) {
     $("cb").onclick = () => { cat = null; home() };
@@ -493,12 +526,16 @@ function pick(t) {
   if (!CART.length) { sel = t; pins(); $("panel").insertAdjacentHTML("afterbegin", `<p class="note">Magdagdag muna ng serbisyo sa cart bago mag-book kay ${esc(first(t.n))}.</p>`); return }
   VIEW = "pick"; sel = t; pins();
   const au = OC.filter(o => o.a), opt = OC.map((o, i) => o.a ? '' : `<label class="ck"><input type="checkbox" data-oc="${i}"> ${esc(o.n)} <small>${ocs(o)}</small></label>`).join("");
-  $("panel").innerHTML = `<h2>${esc(t.n)}</h2>${certified(t) ? CERT : ''}<p class="mute" style="margin:0">${esc(t.s.join(', '))} · ${dist(t).toFixed(1)} km ang layo</p>
+  $("panel").innerHTML = `<h2>${esc(t.n)}</h2>${certified(t) ? CERT : ''}${stars(t.id)}<p class="mute" style="margin:0">${esc(t.s.join(', '))} · ${dist(t).toFixed(1)} km ang layo</p>
  ${cartBox(false)}
  ${opt ? `<p class="gh">Dagdag na singil (kung kailangan)</p>${opt}` : ''}
  <label class="mute" style="display:block;margin-top:10px">Address<input id="ad" value="${esc(USER.addr || '')}" placeholder="Bahay/Unit, Kalye, Brgy., Lungsod"></label>${LF || GM ? `<button class="chip adb" id="adm" type="button"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 22c-5-6.5-8-10.5-8-14a8 8 0 0 1 16 0c0 3.5-3 7.5-8 14z" fill="currentColor"/><circle cx="12" cy="8" r="3" fill="var(--panel)"/></svg>Piliin sa mapa ang eksaktong lugar</button>` : ''}
  <p class="gh">Kailan mo kailangan?</p><div id="sc"></div>
- <div class="sum" id="sum"></div><p class="mute" style="font-size:13px;margin:4px 0 0">Suggested starting rates ito. Maaaring magbago ang huling bayad depende sa aktwal na check ng unit. Hiwalay ang singil sa parte.</p>
+ <div class="sum" id="sum"></div><p class="mute" style="font-size:13px;margin:4px 0 0">Suggested starting rates ito. Kung may kailangang parte o dagdag na gawa, magpapadala ang technician ng <b>quote sa app</b>, at ikaw ang mag-aapruba bago ito ituloy.</p>
+ <p class="gh">Paano ka magbabayad?</p>
+ <label class="ck pay"><input type="radio" name="pm" value="cash" checked> <span><b>Cash o GCash sa technician</b><small>Babayaran mo pagkatapos ng trabaho, ayon sa halagang nakalagay sa app.</small></span></label>
+ <label class="ck pay off"><input type="radio" name="pm" value="online" disabled> <span><b>Online sa app (GCash, Maya, card)</b><small>Malapit na</small></span></label>
+ <p class="note wty">May <b>${WDAYS}-araw na warranty</b> ang trabahong naka-book at nabayaran ayon sa app. Huwag makipag-deal sa labas ng app para protektado ka.</p>
  <p class="err" id="be" role="alert"></p>
  <button class="btn" id="bk">I-book si ${esc(first(t.n))}</button>
  <button class="btn alt" id="mg">Mag-message kay ${esc(first(t.n))}</button>
@@ -529,7 +566,8 @@ function pick(t) {
     if (ST != 'now' && !slotOk(ST, BUSY)) { $("be").textContent = "Hindi na pwede ang oras na iyon. Pumili ng ibang oras."; drawSched(); return }
     const extras = OC.filter((o, i) => !o.a && on(i)).map(o => o.n);
     busy("bk", true);
-    const { data, error } = await sb.from("bookings").insert({ customer_id: USER.id, tech_id: t.id, cust_name: USER.name, cust_phone: USER.phone || "", tech_name: t.n, svc: CART.map(cartLine).join('; ') + (extras.length ? ' + ' + extras.join(', ') : ''), address: ad, sched: ST == 'now' ? `Ngayon (~${eta(t)} min)` : `${dabs(ST)} · ${tlabel(ST)}`, sched_at: ST == 'now' ? null : new Date(ST).toISOString(), amt: est()[0], booking_fee: FEE }).select().single();
+    // Ang server ang nagkukuwenta ng presyo mula sa items; ang amt dito ay pantantiya lang.
+    const { data, error } = await sb.from("bookings").insert({ customer_id: USER.id, tech_id: t.id, cust_name: USER.name, tech_name: t.n, svc: CART.map(cartLine).join('; ') + (extras.length ? ' + ' + extras.join(', ') : ''), items: { cart: CART.map(x => ({ c: x.c, n: x.n, q: x.q })), extras }, address: ad, sched: ST == 'now' ? `Ngayon (~${eta(t)} min)` : `${dabs(ST)} · ${tlabel(ST)}`, sched_at: ST == 'now' ? null : new Date(ST).toISOString(), amt: est()[0], booking_fee: FEE, pay_method: 'cash' }).select().single();
     busy("bk", false);
     if (error) { $("be").textContent = "Hindi na-book: " + error.message; return }
     if (!USER.addr) { USER.addr = ad; sb.from("profiles").update({ addr: ad }).eq("id", USER.id) }
@@ -554,13 +592,35 @@ function trackView() {
  <p class="mute" style="margin:0 0 12px">${esc(b.svc)} · ${esc(b.address)}</p>
  <div class="eta">${big}</div><div class="mute">${sub}</div>
  ${stage != null ? `<ul class="steps">${STEPS.map((s, i) => `<li class="${i <= stage ? 'on' : ''}">${s}</li>`).join('')}</ul>` : ''}
- ${bWhen(b) ? `<div class="row"><span class="mute">Schedule</span><b>${esc(bWhen(b))}</b></div>` : ''}<div class="row"><span class="mute">Tinatayang bayad${b.booking_fee ? `<br><small>kasama ang ${fmt(b.booking_fee)} booking fee</small>` : ''}</span><b>${fmt(total(b))}</b></div>
- <button class="btn" id="tc">Mag-message sa technician</button>
+ ${quoteCard(b)}
+ ${bWhen(b) ? `<div class="row"><span class="mute">Schedule</span><b>${esc(bWhen(b))}</b></div>` : ''}${bill(b)}
+ ${b.st == 'Natapos' ? doneBox(b) : `<p class="mute" style="font-size:13px;margin:4px 0 0">Bayad: <b>cash o GCash sa technician</b> pagkatapos ng trabaho. Ang halagang nasa app lang ang babayaran mo.</p>`}
+ <button class="btn${b.q_status == 'hinihintay' ? ' alt' : ''}" id="tc">Mag-message sa technician</button>
  ${["Bago", "Tinanggap", "Papunta na"].includes(b.st) ? `<button class="btn alt" id="cx">Kanselahin ang booking</button>` : ""}
  <button class="btn alt" id="bh">Bumalik</button><p class="err" id="te" role="alert"></p>`;
   $("tc").onclick = () => openChat(t);
   $("bh").onclick = () => { TRACK = null; home() };
   if ($("cx")) $("cx").onclick = async () => { const r = await setStatus(b.id, 'Kinansela'); if (r) $("te").textContent = r };
+  const rpc = async (fn, a, id) => { busy(id, true); const { error } = await sb.rpc(fn, a); if (error) { busy(id, false); $("te").textContent = "Hindi na-save: " + error.message; return } const { data } = await sb.from("bookings").select("*").eq("id", b.id).single(); if (data) { TRACK = upsertTx(data); trackView() } };
+  if ($("qok")) $("qok").onclick = () => rpc("answer_quote", { bid: b.id, ok: true }, "qok");
+  if ($("qno")) $("qno").onclick = () => rpc("answer_quote", { bid: b.id, ok: false }, "qno");
+  let RS = 0; document.querySelectorAll("[data-rs]").forEach(x => x.onclick = () => { RS = +x.dataset.rs; document.querySelectorAll("[data-rs]").forEach(y => y.setAttribute("aria-pressed", +y.dataset.rs <= RS)) });
+  if ($("rsub")) $("rsub").onclick = () => { if (!RS) { $("te").textContent = "Pumili ng bilang ng star."; return } rpc("rate_booking", { bid: b.id, stars: RS, words: $("rv").value }, "rsub") };
+}
+// Breakdown ng bayad: serbisyo, aprubadong dagdag (quote), booking fee.
+const bill = b => `<div class="sum"><div class="ci tot"><span>Serbisyo</span><b>${fmt(b.amt)}</b></div>${b.extra_amt ? `<div class="ci tot"><span>Dagdag na inaprubahan mo<br><small class="mute">${esc(b.extra_note)}</small></span><b>${fmt(b.extra_amt)}</b></div>` : ''}${b.booking_fee ? `<div class="ci tot"><span>Booking fee <small class="mute">(para sa CoolFix app)</small></span><b>${fmt(b.booking_fee)}</b></div>` : ''}<div class="ci tot big"><span>${b.st == 'Natapos' ? 'Kabuuang babayaran' : 'Tinatayang total'}</span><b>${fmt(total(b))}</b></div></div>`;
+// Quote mula sa technician na kailangang aprubahan ng customer.
+function quoteCard(b) {
+  if (b.q_status == 'hinihintay') return `<div class="quote" role="alert"><b>Quote mula kay ${esc(first(b.tech_name))}</b><p style="margin:4px 0">${esc(b.q_note)}</p><div class="ci tot"><span>Dagdag na singil</span><b>+ ${fmt(b.q_amt)}</b></div><div class="ci tot big"><span>Bagong total kung aaprubahan</span><b>${fmt(total(b) + b.q_amt)}</b></div><p class="mute" style="font-size:13px;margin:4px 0 8px">Itutuloy lang ng technician ang dagdag na gawa kapag inaprubahan mo.</p><div class="row2"><button class="btn" id="qok">Aprubahan</button><button class="btn alt" id="qno">Tanggihan</button></div></div>`;
+  if (b.q_status == 'tinanggihan' && ACTIVE.includes(b.st)) return `<p class="note">Hindi mo inaprubahan ang quote na ${fmt(b.q_amt)} (${esc(b.q_note)}). Hindi ito idadagdag sa bayad mo.</p>`;
+  return '';
+}
+// Pagkatapos ng trabaho: babayaran, warranty at rating.
+function doneBox(b) {
+  const w = b.warranty_until && new Date(b.warranty_until) > new Date();
+  return `<p class="note"><b>Bayaran si ${esc(first(b.tech_name))} ng ${fmt(total(b))}</b> (cash o GCash). Ito lang ang tamang halaga. Kapag sobra ang hiningi, i-report sa CoolFix.</p>
+  ${b.warranty_until ? `<p class="note wty">${w ? `May warranty hanggang <b>${dabs(b.warranty_until)}</b>. Kapag bumalik ang sira, i-message si ${esc(first(b.tech_name))} dito sa app.` : `Tapos na ang warranty noong ${dabs(b.warranty_until)}.`}</p>` : ''}
+  ${b.rating ? `<p class="mute">Ni-rate mo ito ng <span class="star">${'★'.repeat(b.rating)}</span>${b.review ? `: “${esc(b.review)}”` : ''}</p>` : `<div class="rate"><b>Paano ang serbisyo ni ${esc(first(b.tech_name))}?</b><div class="stars" role="group" aria-label="Rating">${[1, 2, 3, 4, 5].map(i => `<button type="button" data-rs="${i}" aria-pressed="false" aria-label="${i} star">★</button>`).join('')}</div><input id="rv" maxlength="300" placeholder="Komento (hindi kailangan)"><button class="btn" id="rsub">I-submit ang rating</button></div>`}`;
 }
 async function setStatus(id, st) {
   const { data, error } = await sb.from("bookings").update({ status: st }).eq("id", id).select().single();
@@ -572,16 +632,16 @@ async function setStatus(id, st) {
 const myJobs = () => TX.filter(x => x.tech_id == USER.id);
 
 // ---------- Kita at commission voucher ----------
-const doneAt = x => new Date(x.updated_at || x.created_at).getTime();
+const doneAt = x => new Date(x.done_at || x.updated_at || x.created_at).getTime();
 const mkey = t => { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') };
 const mname = k => new Date(k + '-01T00:00:00').toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
 function byMonth(J) {
   const m = {};
-  J.filter(x => x.st == 'Natapos').forEach(x => { const k = mkey(doneAt(x)), o = m[k] = m[k] || { k, jobs: [], g: 0 }; o.jobs.push(x); o.g += x.amt });
-  return Object.values(m).map(o => ({ ...o, c: o.jobs.reduce((n, x) => n + fee(x.amt), 0), n: o.g - o.jobs.reduce((n, x) => n + fee(x.amt), 0) })).sort((a, b) => b.k.localeCompare(a.k));
+  J.filter(x => x.st == 'Natapos').forEach(x => { const k = mkey(doneAt(x)), o = m[k] = m[k] || { k, jobs: [], g: 0 }; o.jobs.push(x); o.g += gross(x) });
+  return Object.values(m).map(o => ({ ...o, c: o.jobs.reduce((n, x) => n + comm(x), 0), n: o.g - o.jobs.reduce((n, x) => n + comm(x), 0) })).sort((a, b) => b.k.localeCompare(a.k));
 }
 function earnBox(J) {
-  const D = J.filter(x => x.st == 'Natapos'), net = a => a.reduce((n, x) => n + x.amt - fee(x.amt), 0), now = Date.now(), t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  const D = J.filter(x => x.st == 'Natapos'), net = a => a.reduce((n, x) => n + gross(x) - comm(x), 0), now = Date.now(), t0 = new Date(); t0.setHours(0, 0, 0, 0);
   const ms = byMonth(J), cur = ms.find(o => o.k == mkey(now));
   return `<section class="earn"><h3>Buod ng kita mo</h3><p class="mute" style="margin:0 0 8px;font-size:13px">Netong kita (${TPCT}), pagkatapos ng ${PCT} commission ng CoolFix. Natapos na booking lang.</p>
   <div class="stats s4"><div><b>${fmt(net(D.filter(x => doneAt(x) >= t0.getTime())))}</b><small>Ngayong araw</small></div><div><b>${fmt(net(D.filter(x => doneAt(x) >= now - 7 * 864e5)))}</b><small>Nakaraang 7 araw</small></div><div><b>${fmt(cur ? cur.n : 0)}</b><small>Ngayong buwan</small></div><div><b>${fmt(net(D))}</b><small>Kabuuan</small></div></div>
@@ -614,11 +674,11 @@ async function voucher(t, k, jobs) {
     d.setFontSize(8.5); d.setTextColor(...ink);
     const sv = d.splitTextToSize(String(x.svc || ''), 66);
     d.text(new Date(doneAt(x)).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }), X[0], y); d.text(String(x.code || x.id), X[1], y); d.text(sv.slice(0, 2), X[2], y);
-    d.text(P(x.amt), X[3], y, { align: 'right' }); d.text(P(fee(x.amt)), X[4], y, { align: 'right' }); d.text(P(x.amt - fee(x.amt)), X[5], y, { align: 'right' });
+    d.text(P(gross(x)), X[3], y, { align: 'right' }); d.text(P(comm(x)), X[4], y, { align: 'right' }); d.text(P(gross(x) - comm(x)), X[5], y, { align: 'right' });
     y += sv.length > 1 ? 9 : 6; d.setDrawColor(230, 236, 246); d.line(L, y - 4, R, y - 4);
   });
   if (!rows.length) { d.setTextColor(...mute); d.text('Walang natapos na booking sa buwang ito.', L + 1, y); y += 6 }
-  const g = rows.reduce((n, x) => n + x.amt, 0), c = rows.reduce((n, x) => n + fee(x.amt), 0);
+  const g = rows.reduce((n, x) => n + gross(x), 0), c = rows.reduce((n, x) => n + comm(x), 0);
   if (y > 230) { d.addPage(); y = 20 }
   y += 4; d.setFontSize(10);
   [[`Bilang ng natapos na booking`, String(rows.length)], ['Kabuuang bayad sa serbisyo', P(g)], [`Commission ng CoolFix (${PCT})`, P(c)]].forEach(([a, b]) => { d.setTextColor(...mute); d.text(a, 104, y); d.setTextColor(...ink); d.text(b, R - 2, y, { align: 'right' }); y += 6 });
@@ -646,17 +706,24 @@ function techCal(J) {
 function techDash() {
   VIEW = "dash"; const u = USER, J = myJobs();
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const done = J.filter(x => x.st == 'Natapos'), earn = done.filter(x => new Date(x.updated_at) >= today).reduce((n, x) => n + x.amt - fee(x.amt), 0);
+  const done = J.filter(x => x.st == 'Natapos'), earn = done.filter(x => new Date(x.updated_at) >= today).reduce((n, x) => n + gross(x) - comm(x), 0);
   const act = J.filter(x => ACTIVE.includes(x.st)).sort((a, b) => (a.st == 'Bago' ? 0 : 1) - (b.st == 'Bago' ? 0 : 1) || bTime(a) - bTime(b));
-  const card = b => `<div class="jb" id="job-${b.id}"><b>${esc(b.svc)}</b>${b.sched_at ? `<p class="when">${esc(bWhen(b))}</p>` : ''}<p class="mute" style="margin:4px 0">${esc(b.cust_name)}${b.cust_phone ? ' · <a href="tel:' + esc(b.cust_phone) + '">' + esc(b.cust_phone) + '</a>' : ''}<br>${esc(b.address)}<br>${b.sched_at ? '' : esc(b.sched || '') + ' · '}${fmt(b.amt)} · <span class="pill">${esc(b.st)}</span></p>
-  ${b.st == 'Bago' && b.sched_at ? `<button class="btn" data-s="Tinanggap" data-b="${b.id}">Tanggapin ang schedule</button><button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Bago' ? `<button class="btn" data-s="Papunta na" data-b="${b.id}">Tanggapin at pumunta</button><button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Tinanggap' ? `<button class="btn" data-s="Papunta na" data-b="${b.id}">Papunta na ako</button>` : b.st == 'Papunta na' ? `<button class="btn" data-s="Dumating na" data-b="${b.id}">Dumating na ako</button>` : `<button class="btn" data-s="Natapos" data-b="${b.id}">Tapos na ang trabaho</button>`}
+  const low = wLow(), acc = (id, st, l) => `<button class="btn" data-s="${st}" data-b="${id}" ${low ? 'disabled title="Mag-top up muna"' : ''}>${l}</button>`;
+  const card = b => `<div class="jb" id="job-${b.id}"><b>${esc(b.svc)}</b>${b.sched_at ? `<p class="when">${esc(bWhen(b))}</p>` : ''}<p class="mute" style="margin:4px 0">${esc(b.cust_name)}<br>${esc(b.address)}<br>${b.sched_at ? '' : esc(b.sched || '') + ' · '}<b>${fmt(total(b))}</b> sisingilin · <span class="pill">${esc(b.st)}</span></p>
+  ${b.extra_amt ? `<p class="mute" style="margin:0 0 6px;font-size:13px">Kasama ang aprubadong dagdag: ${fmt(b.extra_amt)} (${esc(b.extra_note)})</p>` : ''}
+  ${b.st == 'Bago' && low ? `<p class="note">Kulang ang wallet mo para tanggapin ito. <button class="chip" data-gowl>Mag-top up</button></p>` : ''}
+  ${b.st == 'Bago' && b.sched_at ? acc(b.id, 'Tinanggap', 'Tanggapin ang schedule') + `<button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Bago' ? acc(b.id, 'Papunta na', 'Tanggapin at pumunta') + `<button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Tinanggap' ? `<button class="btn" data-s="Papunta na" data-b="${b.id}">Papunta na ako</button>` : b.st == 'Papunta na' ? `<button class="btn" data-s="Dumating na" data-b="${b.id}">Dumating na ako</button>` : jobEnd(b)}
   <button class="btn alt" data-c="${b.id}">Mag-message sa customer</button></div>`;
-  const ds = u.doc_status || "kulang", lock = !u.online && (REQ ? ds != "aprubado" : !["sinusuri", "aprubado"].includes(ds)), noId = !(u.docs && u.docs.vid), form = ds != "sinusuri" || RE || noId;
+  // Pagdating sa customer: quote para sa dagdag na gawa o parte, tapos tapusin ang trabaho at singilin ang halagang nasa app.
+  const jobEnd = b => b.q_status == 'hinihintay' ? `<div class="quote"><b>Hinihintay ang sagot ng customer sa quote mo</b><p class="mute" style="margin:4px 0">+${fmt(b.q_amt)} · ${esc(b.q_note)}</p><p class="mute" style="font-size:13px;margin:0">Huwag munang ituloy ang dagdag na gawa hangga't hindi inaaprubahan.</p></div>`
+    : `${b.q_status == 'tinanggihan' ? `<p class="note">Hindi inaprubahan ng customer ang quote na ${fmt(b.q_amt)}. Hindi ito kasama sa singil.</p>` : ''}<details class="qf"><summary>May dagdag na gawa o parte? Magpadala ng quote</summary><label>Dagdag na singil (₱)<input type="number" min="1" inputmode="numeric" id="qa-${b.id}" placeholder="hal. 800"></label><label>Para saan?<input id="qn-${b.id}" maxlength="300" placeholder="hal. Bagong capacitor at labor"></label><button class="btn alt" data-q="${b.id}">Ipadala ang quote sa customer</button></details>
+    <button class="btn" data-s="Natapos" data-b="${b.id}">Tapos na · nasingil ko ang ${fmt(total(b))}</button>`;
+  const ds = u.doc_status || "kulang", dlock = !u.online && (REQ ? ds != "aprubado" : !["sinusuri", "aprubado"].includes(ds)), lock = dlock || (!u.online && low), noId = !(u.docs && u.docs.vid), form = ds != "sinusuri" || RE || noId;
   const docBox = ds == "aprubado" && !RE && !noId ? `<p class="mute" style="margin:6px 0 0">Dokumento: ${ctName(u.cert_type)} ${dpill(ds)} <button class="chip" id="reup" style="padding:2px 9px;font-size:12px">Palitan</button></p>${u.cert_type == 'nc2' ? `<p class="note">${CERT} Makikita ng mga customer ang badge mo, at pwede kang tumanggap ng installation at major repair.</p>` : `<p class="note">Mag-upload ng <b>NC II</b> para magkaroon ng NC II Certified badge at makatanggap ng installation at major repair (hal. compressor, refrigerant).</p>`}`
     : `<div class="jb doc ${ds}"><b>${noId && ds != "kulang" ? "Kailangan na rin ng Valid ID" : ds == "aprubado" ? "Palitan ang dokumento" : ds == "sinusuri" ? "Sinusuri na ng admin ang dokumento mo" : ds == "tinanggihan" ? "Hindi naaprubahan ang dokumento mo" : "Kailangan ng dokumento bago makatanggap ng booking"}</b>
     <p class="mute" style="margin:4px 0">${noId && ds != "kulang" ? `Bagong requirement ang valid ID para sa lahat ng technician. I-upload ito sa ibaba.${ds == "aprubado" ? " Susuriin ulit ito ng admin, kaya hindi ka muna makakapag-online hangga't hindi naaaprubahan." : ""}` : ds == "sinusuri" && !RE ? `${ctName(u.cert_type)} · ${REQ ? "Makakapag-online ka kapag naaprubahan na ng admin." : "Pwede ka nang mag-online habang sinusuri."}` : ds == "tinanggihan" ? `Dahilan: ${esc(u.doc_note || "—")}. Mag-upload ulit ng malinaw na kopya.` : ds == "aprubado" ? "Kapag nagpalit ka, susuriin ulit ito ng admin at hindi ka muna makakapag-online." : "I-upload ang valid ID at NC II certificate mo. Kung walang NC II, ang DTI Business Permit at BIR COR (Form 2303)."}</p>
     ${form ? `<div id="dz"></div><p class="err" id="dze" role="alert"></p><button class="btn" id="dsub">I-submit ang dokumento</button>${RE ? `<button class="btn alt" id="dcx">Huwag na</button>` : ""}` : `<button class="chip" id="reup">Palitan ang dokumento</button>`}</div>`;
-  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p><button type="button" class="olbar${u.online ? " on" : ""}" id="ol" role="switch" aria-checked="${!!u.online}" ${lock ? "disabled" : ""}><span class="old"></span><span class="nt"><b>${u.online ? "Online ka" : "Offline ka"}</b><small>${u.online ? "Nakikita ka ng mga customer at pwede kang ma-book. I-tap para mag-offline." : lock ? (ds == "sinusuri" ? "Hinihintay ang pag-apruba ng admin sa dokumento mo." : "I-upload muna ang dokumento sa ibaba para makapag-online.") : "Hindi ka nakikita ng mga customer. I-tap para mag-online."}</small></span><span class="sw" aria-hidden="true"><i></i></span></button>${docBox}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><p class="err" id="de" role="alert"></p>${techCal(J)}<h3 style="margin:16px 0 4px">Mga aktibong booking</h3><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<p class="err" id="pe" role="alert"></p></div>`;
+  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p><button type="button" class="olbar${u.online ? " on" : ""}" id="ol" role="switch" aria-checked="${!!u.online}" ${lock ? "disabled" : ""}><span class="old"></span><span class="nt"><b>${u.online ? "Online ka" : "Offline ka"}</b><small>${u.online ? "Nakikita ka ng mga customer at pwede kang ma-book. I-tap para mag-offline." : lock ? (!dlock ? `Kulang ang wallet mo (minimum ${fmt(WMIN)}). Mag-top up muna para makapag-online.` : ds == "sinusuri" ? "Hinihintay ang pag-apruba ng admin sa dokumento mo." : "I-upload muna ang dokumento sa ibaba para makapag-online.") : "Hindi ka nakikita ng mga customer. I-tap para mag-online."}</small></span><span class="sw" aria-hidden="true"><i></i></span></button>${docBox}${walletMini()}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><p class="err" id="de" role="alert"></p>${techCal(J)}<h3 style="margin:16px 0 4px">Mga aktibong booking</h3><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<p class="err" id="pe" role="alert"></p></div>`;
   if ($("dz")) { if (!CT) CT = u.cert_type || null; mountDocs($("dz")) }
   if ($("reup")) $("reup").onclick = () => { RE = true; techDash() };
   if ($("dcx")) $("dcx").onclick = () => { RE = false; FILES = {}; techDash() };
@@ -676,12 +743,62 @@ function techDash() {
     if (error) { busy("ol", false); $("de").textContent = "Hindi na-update: " + error.message; return }
     USER = data; techDash();
   };
+  A.querySelectorAll("[data-gowl]").forEach(b => b.onclick = () => { TAB = 'wl'; show() });
+  A.querySelectorAll("[data-q]").forEach(b => b.onclick = async () => {
+    const id = +b.dataset.q, a = Math.round(Number($("qa-" + id).value)), n = $("qn-" + id).value.trim();
+    if (!(a > 0)) { $("de").textContent = "Ilagay ang halaga ng dagdag na singil."; return } if (n.length < 3) { $("de").textContent = "Ilagay kung para saan ang dagdag na singil."; return }
+    b.disabled = true; const { error } = await sb.rpc("send_quote", { bid: id, amount: a, why: n });
+    if (error) { b.disabled = false; $("de").textContent = "Hindi naipadala: " + error.message; return }
+    const { data } = await sb.from("bookings").select("*").eq("id", id).single(); if (data) upsertTx(data); techDash();
+  });
   A.querySelectorAll("[data-s]").forEach(b => b.onclick = async () => { b.disabled = true; const r = await setStatus(+b.dataset.b, b.dataset.s); if (r) { $("de").textContent = r; b.disabled = false } });
   A.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { const j = TX.find(x => x.id == b.dataset.c); openChatWithCustomer(j) });
   A.querySelectorAll("#tcal [data-day]").forEach(b => b.onclick = () => { TD = b.dataset.day; techDash(); const c = $("tcal"); if (c) c.scrollIntoView({ block: "nearest" }) });
   A.querySelectorAll("[data-job]").forEach(b => b.onclick = () => { const c = $("job-" + b.dataset.job); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("flash"); setTimeout(() => c.classList.remove("flash"), 1200) } });
   A.querySelectorAll("[data-pdf]").forEach(b => b.onclick = async () => { const o = byMonth(myJobs()).find(m => m.k == b.dataset.pdf); b.disabled = true; b.textContent = "…"; const e = await voucher(USER, b.dataset.pdf, o ? o.jobs : []); b.disabled = false; b.textContent = "PDF"; $("pe").textContent = e });
 }
+// ---------- Tech Wallet ----------
+// Prepaid credits: dito ibinabawas ang commission at booking fee ng bawat cash na job. Hindi ito ma-withdraw.
+const WK = { topup: 'Top-up', commission: 'Commission', booking_fee: 'Booking fee', bonus: 'Bonus mula sa CoolFix', adjust: 'Adjustment' };
+const TST = { sinusuri: ['Sinusuri', 'wt'], aprubado: ['Pumasok na', 'ok'], tinanggihan: ['Tinanggihan', 'no'] };
+const tpill = s => { const d = TST[s] || TST.sinusuri; return `<span class='pill ${d[1]}'>${d[0]}</span>` };
+function walletMini() {
+  const b = WAL ? WAL.balance : 0, low = wLow(), pend = TOPS.filter(x => x.status == 'sinusuri').length;
+  return `<button type="button" class="wmini${low ? ' low' : ''}" data-gowl><span><small>Wallet credits</small><b>${fmt(b)}</b></span><span class="mute">${low ? `Kulang. Minimum ${fmt(WMIN)} para makatanggap ng job.` : pend ? `${pend} top-up na sinusuri` : WREQ ? `Minimum ${fmt(WMIN)}` : 'Dito ibinabawas ang commission'}</span><span class="chip">${low ? 'Mag-top up' : 'Buksan'}</span></button>`;
+}
+function walletView() {
+  VIEW = "wallet"; const b = WAL ? WAL.balance : 0, low = wLow(), acct = m => TOPUP[m] && TOPUP[m].number ? `${esc(TOPUP[m].number)}${TOPUP[m].name ? ' · ' + esc(TOPUP[m].name) : ''}` : '';
+  const ways = ['gcash', 'maya'].filter(m => acct(m));
+  A.innerHTML = `<div class="panel au"><h2>Wallet</h2>
+  <div class="wbig${low ? ' low' : ''}"><small>Balance (credits)</small><b>${fmt(b)}</b><span>${low ? `Kulang ang balance mo. Kailangan ng hindi bababa sa ${fmt(WMIN)} para makapag-online at makatanggap ng job.` : WREQ ? `Minimum na balance: ${fmt(WMIN)}` : 'Hindi pa required ang minimum balance.'}</span></div>
+  <p class="mute" style="font-size:13px">Sa bawat <b>cash</b> na job na natapos, awtomatikong ibinabawas dito ang ${PCT} commission ng CoolFix at ang ${fmt(FEE)} booking fee na sinisingil mo sa customer. Credits ito para sa app at hindi ma-withdraw.</p>
+  <h3 style="margin:16px 0 4px">Mag-top up</h3>
+  ${ways.length ? `<ol class="mute steps2"><li>Ipadala ang halaga sa ${ways.map(m => `<b>${m == 'gcash' ? 'GCash' : 'Maya'}</b>: ${acct(m)}`).join(' o ')}</li><li>Ilagay sa ibaba ang reference number at i-upload ang screenshot ng resibo.</li><li>Papasok ang credits kapag na-check na ng admin.</li></ol>
+  <div class="chips" role="group" aria-label="Halaga">${[200, 500, 1000, 2000].map(v => `<button type="button" class="chip" data-ta="${v}">${fmt(v)}</button>`).join('')}</div>
+  <label>Halaga (₱)<input type="number" id="ta" min="50" step="1" inputmode="numeric" placeholder="hal. 500"></label>
+  <label>Paraan<select id="tmth">${ways.map(m => `<option value="${m}">${m == 'gcash' ? 'GCash' : 'Maya'}</option>`).join('')}</select></label>
+  <label>Reference number<input id="tref" maxlength="40" placeholder="Nasa resibo ng GCash/Maya"></label>
+  <label>Screenshot ng resibo<input type="file" id="tpf" accept="image/jpeg,image/png"></label>
+  <p class="err" id="tpe" role="alert"></p><button class="btn" id="tps">I-submit ang top-up</button>` : `<p class="note">Wala pang nakalagay na GCash o Maya number ng CoolFix para sa top-up. Makipag-ugnayan sa admin.</p>`}
+  ${TOPS.length ? `<h3 style="margin:18px 0 4px">Mga top-up mo</h3>${TOPS.map(x => `<div class="row"><span>${fmt(x.amt)} · ${x.method == 'gcash' ? 'GCash' : 'Maya'}<br><small class="mute">Ref ${esc(x.ref)} · ${dstr(x.created_at)}${x.status == 'tinanggihan' && x.note ? ' · ' + esc(x.note) : ''}</small></span>${tpill(x.status)}</div>`).join('')}` : ''}
+  <h3 style="margin:18px 0 4px">Mga galaw ng wallet</h3>${WTX.length ? WTX.map(x => `<div class="row"><span>${esc(WK[x.kind] || x.kind)}<br><small class="mute">${esc(x.note)} · ${dstr(x.created_at)}</small></span><span style="text-align:right"><b class="${x.amt < 0 ? 'neg' : 'pos'}">${x.amt < 0 ? '−' : '+'}${fmt(Math.abs(x.amt))}</b><br><small class="mute">${fmt(x.balance_after)}</small></span></div>`).join('') : '<p class="mute">Wala pang galaw. Lalabas dito ang mga top-up at ang commission na ibinawas.</p>'}</div>`;
+  A.querySelectorAll("[data-ta]").forEach(x => x.onclick = () => { $("ta").value = x.dataset.ta });
+  if (!$("tps")) return;
+  $("tps").onclick = async () => {
+    const a = Math.round(Number($("ta").value)), m = $("tmth").value, ref = $("tref").value.trim(), f = $("tpf").files[0], e = $("tpe");
+    if (!(a >= 50)) return e.textContent = "Ilagay ang halaga (hindi bababa sa ₱50).";
+    if (ref.replace(/[^a-z0-9]/gi, '').length < 4) return e.textContent = "Ilagay ang reference number na nasa resibo.";
+    if (!f) return e.textContent = "I-upload ang screenshot ng resibo.";
+    if (!/^image\/(jpeg|png)$/.test(f.type) || f.size > 5242880) return e.textContent = "JPG o PNG lang, hanggang 5 MB.";
+    busy("tps", true); $("tps").textContent = "Ina-upload…";
+    const path = `${USER.id}/${Date.now()}.${f.type == 'image/png' ? 'png' : 'jpg'}`, up = await sb.storage.from("topup-proofs").upload(path, f, { contentType: f.type });
+    if (up.error) { busy("tps", false); $("tps").textContent = "I-submit ang top-up"; return e.textContent = "Hindi na-upload ang screenshot: " + up.error.message }
+    const { error } = await sb.from("topups").insert({ tech_id: USER.id, amt: a, method: m, ref, proof: path });
+    if (error) { busy("tps", false); $("tps").textContent = "I-submit ang top-up"; return e.textContent = "Hindi na-submit: " + error.message }
+    await loadWallet(); walletView(); A.firstElementChild.insertAdjacentHTML("afterbegin", `<p class="note">Natanggap ang top-up request mo. Papasok ang credits kapag na-check na ng admin.</p>`);
+  };
+}
+
 // While on the way to a customer, share the technician's live location.
 function syncWatch() {
   const going = myJobs().some(x => x.st == 'Papunta na');
@@ -754,7 +871,7 @@ function profile() {
   VIEW = "me"; const u = USER, c = u.role == 'customer', row = (a, b) => `<div class='row'><span class='mute'>${a}</span><span>${esc(b)}</span></div>`;
   const B = c ? myBookings() : myJobs();
   A.innerHTML = `<div class='panel au'><div class='who'><div class='av big'>${esc(ini(u.name))}</div><div><h2 style='margin:0'>${esc(u.name)}</h2><span class='mute'>${c ? 'Customer' : 'Technician'}${u.google ? ' · Google' : ''}</span></div></div>${row('Email', u.email || '')}${u.phone ? row('Cellphone', u.phone) : ''}${u.addr ? row(c ? 'Address' : 'Lugar na sakop', u.addr) : ''}${c ? '' : row('Serbisyo', (u.services || []).join(', '))}
- <h2 style='margin-top:16px'>${c ? 'Mga booking' : 'Mga trabaho'}</h2>${B.length ? B.slice(0, 10).map(b => `<div class='row'><span>${esc(b.svc)}<br><small class='mute'>${esc(c ? b.tech_name : b.cust_name)} · ${esc(b.code || '')}</small></span><span style="text-align:right"><span class='pill ${b.st == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(b.st) ? 'no' : ''}'>${esc(b.st)}</span><br><small class='mute'>${dstr(b.ts)}</small>${c && ACTIVE.includes(b.st) ? `<br><button class="chip" data-tr="${b.id}">I-track</button>` : ''}</span></div>`).join('') : '<p class="mute">Wala pa.</p>'}<button class='btn alt' id='pl'>Mag-log out</button></div>`;
+ <h2 style='margin-top:16px'>${c ? 'Mga booking' : 'Mga trabaho'}</h2>${B.length ? B.slice(0, 10).map(b => `<div class='row'><span>${esc(b.svc)}<br><small class='mute'>${esc(c ? b.tech_name : b.cust_name)} · ${esc(b.code || '')}</small></span><span style="text-align:right"><span class='pill ${b.st == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(b.st) ? 'no' : ''}'>${esc(b.st)}</span><br><small class='mute'>${dstr(b.ts)}</small>${c && (ACTIVE.includes(b.st) || b.st == 'Natapos') ? `<br><button class="chip" data-tr="${b.id}">${b.st == 'Natapos' ? (b.rating ? 'Tingnan' : 'I-rate') : 'I-track'}</button>` : ''}</span></div>`).join('') : '<p class="mute">Wala pa.</p>'}<button class='btn alt' id='pl'>Mag-log out</button></div>`;
   $('pl').onclick = () => $('lo').click();
   A.querySelectorAll('[data-tr]').forEach(b => b.onclick = () => { TRACK = TX.find(x => x.id == b.dataset.tr); TAB = 'find'; show() });
 }
@@ -783,14 +900,14 @@ function rateMarket() {
 }
 
 // ---------- Admin ----------
-function adminView() { VIEW = "admin"; TAB == 'ov' ? admOv() : TAB == 'rq' ? admRq() : TAB == 'tx' ? admTx() : TAB == 'sv' ? admSv() : TAB == 'pr' ? admPr() : admTc() }
+function adminView() { VIEW = "admin"; TAB == 'ov' ? admOv() : TAB == 'rq' ? admRq() : TAB == 'tx' ? admTx() : TAB == 'sv' ? admSv() : TAB == 'pr' ? admPr() : TAB == 'wl' ? admWl() : admTc() }
 let AP = 7;
 function admOv() {
   const DAY = 864e5, t0 = new Date(); t0.setHours(0, 0, 0, 0);
   const st = t0.getTime() - (AP - 1) * DAY, pst = st - AP * DAY;
   const cur = TX.filter(x => x.ts >= st), prev = TX.filter(x => x.ts >= pst && x.ts < st);
-  const done = a => a.filter(x => x.st == 'Natapos'), sum = a => a.reduce((n, x) => n + x.amt, 0);
-  const bf = a => a.reduce((n, x) => n + (x.booking_fee || 0), 0), rev = a => fee(sum(done(a))) + bf(done(a));
+  const done = a => a.filter(x => x.st == 'Natapos'), sum = a => a.reduce((n, x) => n + gross(x), 0);
+  const bf = a => a.reduce((n, x) => n + (x.booking_fee || 0), 0), rev = a => done(a).reduce((n, x) => n + comm(x), 0) + bf(done(a));
   const g = sum(done(cur)), gp = sum(done(prev)), nd = done(cur).length, ndp = done(prev).length;
   const act = TX.filter(x => ACTIVE.includes(x.st));
   const techs = PROFILES.filter(u => u.role == 'technician'), custs = PROFILES.filter(u => u.role == 'customer');
@@ -800,7 +917,7 @@ function admOv() {
   const ticks = [mx, mx / 2, 0], peak = days.reduce((m, x, i) => x.v > days[m].v ? i : m, 0);
   const lbl = (d, i) => AP <= 7 ? d.toLocaleDateString('en-PH', { weekday: 'short' }) : (i % 5 == 0 || i == AP - 1) ? d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }) : '';
   const SS = ['Bago', 'Tinanggap', 'Papunta na', 'Dumating na', 'Natapos', 'Kinansela', 'Tinanggihan'], sc = SS.map(s => [s, cur.filter(x => x.st == s).length]), smx = Math.max(1, ...sc.map(x => x[1]));
-  const tm = {}; done(cur).forEach(x => { const o = tm[x.tech_id] = tm[x.tech_id] || { n: x.tech_name, g: 0, j: 0 }; o.g += x.amt; o.j++ });
+  const tm = {}; done(cur).forEach(x => { const o = tm[x.tech_id] = tm[x.tech_id] || { n: x.tech_name, g: 0, j: 0, c: 0 }; o.g += gross(x); o.c += comm(x); o.j++ });
   const top = Object.values(tm).sort((a, b) => b.g - a.g).slice(0, 5), recent = [...TX].sort((a, b) => b.ts - a.ts).slice(0, 6);
   const pill = s => `<span class='pill ${s == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(s) ? 'no' : ''}'>${esc(s)}</span>`;
   const kpi = (l, v, sub) => `<div class='kpi'><small>${l}</small><b>${v}</b><span>${sub}</span></div>`;
@@ -822,10 +939,10 @@ function admOv() {
   </div>
   <div class='grid2'>
    <section class='card'><div class='ch'><h3>Pinakabagong booking</h3><button class='chip' id='allTx'>Tingnan lahat</button></div>
-    ${recent.length ? recent.map(x => `<div class='li'><div class='av'>${esc(ini(x.cust))}</div><div><b>${esc(x.cust)}</b><small>${esc(x.svc)} · ${esc(first(x.tech))}</small></div><div class='km'>${fmt(x.amt)}<small>${pill(x.st)}</small></div></div>`).join('') : `<p class='mute'>Wala pang booking.</p>`}
+    ${recent.length ? recent.map(x => `<div class='li'><div class='av'>${esc(ini(x.cust))}</div><div><b>${esc(x.cust)}</b><small>${esc(x.svc)} · ${esc(first(x.tech))}</small></div><div class='km'>${fmt(gross(x))}<small>${pill(x.st)}</small></div></div>`).join('') : `<p class='mute'>Wala pang booking.</p>`}
    </section>
    <section class='card'><div class='ch'><h3>Top technician</h3><span class='mute'>ayon sa kita</span></div>
-    ${top.length ? top.map((o, i) => `<div class='li'><div class='rk'>${i + 1}</div><div><b>${esc(o.n)}</b><small>${o.j} natapos</small></div><div class='km'>${fmt(o.g)}<small>${fmt(o.g - fee(o.g))} sa technician</small></div></div>`).join('') : `<p class='mute'>Wala pang natapos na booking sa period na ito.</p>`}
+    ${top.length ? top.map((o, i) => `<div class='li'><div class='rk'>${i + 1}</div><div><b>${esc(o.n)}</b><small>${o.j} natapos</small></div><div class='km'>${fmt(o.g)}<small>${fmt(o.g - o.c)} sa technician</small></div></div>`).join('') : `<p class='mute'>Wala pang natapos na booking sa period na ito.</p>`}
    </section>
   </div></div>`;
   A.querySelectorAll('[data-ap]').forEach(b => b.onclick = () => { AP = +b.dataset.ap; admOv() });
@@ -841,7 +958,7 @@ function admOv() {
 function admTx() {
   const S = ['Lahat', 'Bago', 'Tinanggap', 'Papunta na', 'Dumating na', 'Natapos', 'Kinansela', 'Tinanggihan'], q = AF.q.toLowerCase();
   const L = TX.filter(x => (AF.st == 'Lahat' || x.st == AF.st) && (x.tech + x.cust + x.svc + x.code).toLowerCase().includes(q)).sort((a, b) => b.ts - a.ts);
-  A.innerHTML = `<div class='panel au wide'><h2>Mga transaction</h2><div class='chips'>${S.map(s => `<button class='chip' aria-pressed='${AF.st == s}' data-s='${s}'>${s}</button>`).join('')}</div><input id='aq' placeholder='Hanapin: technician, customer, serbisyo' value='${esc(AF.q)}'><div class='tw'><table><thead><tr><th>ID</th><th>Petsa</th><th>Schedule</th><th>Customer</th><th>Technician</th><th>Serbisyo</th><th>Bayad sa serbisyo</th><th>Booking fee</th><th>Fee (${PCT})</th><th>Status</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.code)}</td><td>${dstr(x.ts)}</td><td>${esc(x.sched_at ? dabs(x.sched_at) + ' · ' + tlabel(x.sched_at) : x.sched || '—')}</td><td>${esc(x.cust)}</td><td>${esc(x.tech)}</td><td>${esc(x.svc)}</td><td>${fmt(x.amt)}</td><td>${fmt(x.booking_fee || 0)}</td><td>${x.st == 'Natapos' ? fmt(fee(x.amt)) : '—'}</td><td><span class='pill ${x.st == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(x.st) ? 'no' : ''}'>${esc(x.st)}</span></td></tr>`).join('') || `<tr><td colspan='9' class='mute'>Walang transaction na tugma.</td></tr>`}</tbody></table></div><p class='mute'>${L.length} transaction · Kabuuang natapos: ${fmt(L.filter(x => x.st == 'Natapos').reduce((n, x) => n + x.amt, 0))}</p></div>`;
+  A.innerHTML = `<div class='panel au wide'><h2>Mga transaction</h2><div class='chips'>${S.map(s => `<button class='chip' aria-pressed='${AF.st == s}' data-s='${s}'>${s}</button>`).join('')}</div><input id='aq' placeholder='Hanapin: technician, customer, serbisyo' value='${esc(AF.q)}'><div class='tw'><table><thead><tr><th>ID</th><th>Petsa</th><th>Schedule</th><th>Customer</th><th>Technician</th><th>Serbisyo</th><th>Bayad sa serbisyo</th><th>Booking fee</th><th>Fee (${PCT})</th><th>Status</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.code)}</td><td>${dstr(x.ts)}</td><td>${esc(x.sched_at ? dabs(x.sched_at) + ' · ' + tlabel(x.sched_at) : x.sched || '—')}</td><td>${esc(x.cust)}</td><td>${esc(x.tech)}</td><td>${esc(x.svc)}</td><td>${fmt(gross(x))}${x.extra_amt ? `<br><small class='mute'>kasama ang ${fmt(x.extra_amt)} na dagdag</small>` : ''}</td><td>${fmt(x.booking_fee || 0)}</td><td>${x.st == 'Natapos' ? fmt(comm(x)) : '—'}</td><td><span class='pill ${x.st == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(x.st) ? 'no' : ''}'>${esc(x.st)}</span></td></tr>`).join('') || `<tr><td colspan='9' class='mute'>Walang transaction na tugma.</td></tr>`}</tbody></table></div><p class='mute'>${L.length} transaction · Kabuuang natapos: ${fmt(L.filter(x => x.st == 'Natapos').reduce((n, x) => n + gross(x), 0))}</p></div>`;
   A.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { AF.st = b.dataset.s; admTx() });
   $('aq').oninput = e => { AF.q = e.target.value; admTx(); const i = $('aq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length) };
 }
@@ -854,15 +971,76 @@ function admPr() {
 function admTc() {
   const m = {};
   PROFILES.filter(u => u.role == 'technician').forEach(u => { m[u.id] = { n: u.name, j: 0, g: 0, c: 0, u } });
-  TX.forEach(x => { const o = m[x.tech_id] = m[x.tech_id] || { n: x.tech, j: 0, g: 0, c: 0 }; if (x.st == 'Natapos') { o.j++; o.g += x.amt } if (['Kinansela', 'Tinanggihan'].includes(x.st)) o.c++ });
+  TX.forEach(x => { const o = m[x.tech_id] = m[x.tech_id] || { n: x.tech, j: 0, g: 0, c: 0 }; if (x.st == 'Natapos') { o.j++; o.g += gross(x); o.cm = (o.cm || 0) + comm(x) } if (['Kinansela', 'Tinanggihan'].includes(x.st)) o.c++ });
   const pri = o => o.u?.doc_status == 'sinusuri' ? 0 : 1, L = Object.values(m).sort((a, b) => pri(a) - pri(b) || b.g - a.g), pend = L.filter(o => pri(o) == 0).length;
   const months = [...new Set([mkey(Date.now()), ...TX.filter(x => x.st == 'Natapos').map(x => mkey(doneAt(x)))])].sort().reverse(); if (!months.includes(VM)) VM = months[0];
-  A.innerHTML = `<div class='panel au wide'><h2>Mga technician</h2><label class='prow' style='max-width:420px'><span>Commission voucher para sa</span><select id='vm'>${months.map(k => `<option value='${k}' ${k == VM ? 'selected' : ''}>${mname(k)}</option>`).join('')}</select></label><p class='err' id='ve' role='alert'></p>${pend ? `<p class='note'><b>${pend}</b> technician ang naghihintay ng pag-apruba ng dokumento. Pindutin ang <b>Suriin</b>.</p>` : ''}<div class='tw'><table><thead><tr><th>Pangalan</th><th>Dokumento</th><th>Cellphone</th><th>Natapos</th><th>Kinansela</th><th>Kabuuang bayad</th><th>Kita ng technician (${TPCT})</th><th>Fee ng CoolFix</th><th>Status</th></tr></thead><tbody>${L.map(o => `<tr><td>${esc(o.n)}${o.u ? `<br><button class='chip' data-vc='${esc(o.u.id)}' style='margin-top:4px'>Voucher PDF</button>` : ''}</td><td>${o.u ? `${dpill(o.u.doc_status)}<br><small class='mute'>${ctName(o.u.cert_type)}</small><br><button class='chip' data-rv='${esc(o.u.id)}' style='margin-top:4px'>Suriin</button>` : '—'}</td><td>${esc(o.u?.phone || '')}</td><td>${o.j}</td><td>${o.c}</td><td>${fmt(o.g)}</td><td>${fmt(o.g - fee(o.g))}</td><td>${fmt(fee(o.g))}</td><td><span class='pill ${o.u && o.u.online ? 'ok' : ''}'>${o.u ? (o.u.online ? 'Online' : 'Offline') : '—'}</span></td></tr>`).join('') || `<tr><td colspan='9' class='mute'>Wala pang technician.</td></tr>`}</tbody></table></div></div>`;
+  A.innerHTML = `<div class='panel au wide'><h2>Mga technician</h2><label class='prow' style='max-width:420px'><span>Commission voucher para sa</span><select id='vm'>${months.map(k => `<option value='${k}' ${k == VM ? 'selected' : ''}>${mname(k)}</option>`).join('')}</select></label><p class='err' id='ve' role='alert'></p>${pend ? `<p class='note'><b>${pend}</b> technician ang naghihintay ng pag-apruba ng dokumento. Pindutin ang <b>Suriin</b>.</p>` : ''}<div class='tw'><table><thead><tr><th>Pangalan</th><th>Dokumento</th><th>Cellphone</th><th>Natapos</th><th>Kinansela</th><th>Kabuuang bayad</th><th>Kita ng technician (${TPCT})</th><th>Fee ng CoolFix</th><th>Status</th></tr></thead><tbody>${L.map(o => `<tr><td>${esc(o.n)}${o.u ? `<br><button class='chip' data-vc='${esc(o.u.id)}' style='margin-top:4px'>Voucher PDF</button>` : ''}</td><td>${o.u ? `${dpill(o.u.doc_status)}<br><small class='mute'>${ctName(o.u.cert_type)}</small><br><button class='chip' data-rv='${esc(o.u.id)}' style='margin-top:4px'>Suriin</button>` : '—'}</td><td>${esc(o.u?.phone || '')}</td><td>${o.j}</td><td>${o.c}</td><td>${fmt(o.g)}</td><td>${fmt(o.g - (o.cm || 0))}</td><td>${fmt(o.cm || 0)}</td><td><span class='pill ${o.u && o.u.online ? 'ok' : ''}'>${o.u ? (o.u.online ? 'Online' : 'Offline') : '—'}</span></td></tr>`).join('') || `<tr><td colspan='9' class='mute'>Wala pang technician.</td></tr>`}</tbody></table></div></div>`;
   A.querySelectorAll('[data-rv]').forEach(b => b.onclick = () => admDoc(b.dataset.rv));
   $('vm').onchange = e => { VM = e.target.value };
   A.querySelectorAll('[data-vc]').forEach(b => b.onclick = async () => { const u = PROFILES.find(p => p.id == b.dataset.vc), o = byMonth(TX.filter(x => x.tech_id == u.id)).find(m => m.k == VM); b.disabled = true; const e = await voucher(u, VM, o ? o.jobs : []); b.disabled = false; $('ve').textContent = e });
 }
 let VM = '';
+// ---------- Admin: Wallet at top-up ----------
+let WALS = [];
+async function loadTopups() {
+  const [t, w] = await Promise.all([sb.from("topups").select("*").order("created_at", { ascending: false }).limit(200), sb.from("wallets").select("*")]);
+  TOPS = t.data || []; WALS = w.data || [];
+}
+function admWl() {
+  VIEW = "admin"; const nm = id => (PROFILES.find(p => p.id == id) || {}).name || 'Technician', bal = id => (WALS.find(w => w.tech_id == id) || {}).balance || 0;
+  const pend = TOPS.filter(x => x.status == 'sinusuri'), done = TOPS.filter(x => x.status != 'sinusuri').slice(0, 20), T = PROFILES.filter(u => u.role == 'technician').sort((a, b) => bal(a.id) - bal(b.id));
+  const mth = m => m == 'gcash' ? 'GCash' : 'Maya', E = x => esc(String(x ?? ''));
+  A.innerHTML = `<div class='dash'><div class='dh'><div><h2>Wallet ng mga technician</h2><p class='mute'>Prepaid credits para sa commission ng cash na job. Suriin ang top-up bago aprubahan: tingnan kung pumasok talaga ang pera sa GCash/Maya ng CoolFix.</p></div></div>
+  <section class='card'><div class='ch'><h3>Mga top-up na naghihintay</h3><span class='mute'>${pend.length}</span></div>
+  ${pend.length ? pend.map(x => `<div class='tpr'><div class='dv' data-tp='${x.id}'><span class='mute'>Naglo-load…</span></div><div><b>${E(nm(x.tech_id))}</b><p style='margin:2px 0'><b>${fmt(x.amt)}</b> · ${mth(x.method)} · Ref <b>${E(x.ref)}</b></p><small class='mute'>${dstr(x.created_at)} · ${tlabel(x.created_at)} · Balance ngayon: ${fmt(bal(x.tech_id))}</small>
+   <input data-tn='${x.id}' placeholder='Dahilan kung tatanggihan (hal. walang pumasok na pera)'><p class='err' data-te='${x.id}' role='alert'></p><div class='row2'><button class='btn' data-tok='${x.id}'>Aprubahan · +${fmt(x.amt)}</button><button class='btn alt' data-tno='${x.id}'>Tanggihan</button></div></div></div>`).join('') : `<p class='mute'>Walang naghihintay na top-up.</p>`}</section>
+  <div class='grid2'>
+  <section class='card'><div class='ch'><h3>Balance ng bawat technician</h3></div>
+   ${T.length ? T.map(u => `<div class='li'><div class='av'>${esc(ini(u.name))}</div><div><b>${E(u.name)}</b><small>${WREQ && bal(u.id) < WMIN ? `<span class='pill no'>Kulang</span>` : `<span class='pill ok'>OK</span>`}</small></div><div class='km'>${fmt(bal(u.id))}<small><button class='chip' data-adj='${E(u.id)}'>Adjust</button></small></div></div>`).join('') : `<p class='mute'>Wala pang technician.</p>`}
+   <div id='adjf' hidden><label>Halaga (₱, lagyan ng minus para magbawas)<input type='number' id='aja' placeholder='hal. 200 o -100'></label><label>Dahilan (makikita ng technician)<input id='ajn' placeholder='hal. Welcome credits'></label><p class='err' id='aje' role='alert'></p><button class='btn' id='ajs'>I-save</button></div>
+  </section>
+  <section class='card'><div class='ch'><h3>Patakaran ng wallet at bayad</h3></div>
+   <label class='ck'><input type='checkbox' id='wreq' ${WREQ ? 'checked' : ''}> Kailangan ng minimum na balance para mag-online at tumanggap ng job</label>
+   <label class='prow'><span>Minimum na balance</span><span>₱ <input type='number' id='wmin' min='0' step='50' value='${WMIN}'></span></label>
+   <label class='prow'><span>Commission ng CoolFix</span><span><input type='number' id='wpct' min='0' max='50' step='1' value='${Math.round(RATE * 100)}'> %</span></label>
+   <label class='prow'><span>Warranty (araw)</span><span><input type='number' id='wday' min='0' max='365' step='1' value='${WDAYS}'></span></label>
+   <p class='gh'>Saan magpapadala ng top-up ang technician</p>
+   ${['gcash', 'maya'].map(m => `<div class='row2'><label style='flex:1'>${mth(m)} number<input id='n_${m}' inputmode='tel' value='${E(TOPUP[m] && TOPUP[m].number)}' placeholder='09XXXXXXXXX'></label><label style='flex:1'>Account name<input id='a_${m}' value='${E(TOPUP[m] && TOPUP[m].name)}' placeholder='hal. CoolFix'></label></div>`).join('')}
+   <p class='mute' id='wse' role='status'></p><button class='btn' id='wss'>I-save</button>
+   <p class='mute' style='font-size:12px'>Ang bagong commission % ay para lang sa mga bagong booking.</p>
+  </section></div>
+  ${done.length ? `<section class='card'><div class='ch'><h3>Mga nasuring top-up</h3></div>${done.map(x => `<div class='li'><div><b>${E(nm(x.tech_id))}</b><small>${fmt(x.amt)} · ${mth(x.method)} · Ref ${E(x.ref)} · ${dstr(x.created_at)}${x.note ? ' · ' + E(x.note) : ''}</small></div><div class='km'>${tpill(x.status)}</div></div>`).join('')}</section>` : ''}</div>`;
+  // Litrato ng resibo (pansamantalang link)
+  (async () => { for (const el of [...A.querySelectorAll('[data-tp]')]) { const x = TOPS.find(t => t.id == el.dataset.tp); if (!x || !x.proof) { el.innerHTML = `<span class='mute'>Walang screenshot</span>`; continue } const { data } = await sb.storage.from('topup-proofs').createSignedUrl(x.proof, 600); if (!el.isConnected) return; const u = data && data.signedUrl; el.innerHTML = u ? `<a href='${esc(u)}' target='_blank' rel='noopener'><img src='${esc(u)}' alt='Resibo ng top-up ni ${esc(nm(x.tech_id))}'></a>` : `<span class='err'>Hindi mabuksan</span>` } })();
+  const review = async (id, ok) => {
+    const n = (A.querySelector(`[data-tn='${id}']`) || {}).value || '', e = A.querySelector(`[data-te='${id}']`);
+    if (!ok && !n.trim()) { e.textContent = 'Ilagay kung bakit tinanggihan.'; return }
+    A.querySelectorAll(`[data-tok='${id}'],[data-tno='${id}']`).forEach(b => b.disabled = true);
+    const { error } = await sb.rpc('review_topup', { tid: +id, ok, why: n.trim() });
+    if (error) { e.textContent = 'Hindi na-save: ' + error.message; A.querySelectorAll(`[data-tok='${id}'],[data-tno='${id}']`).forEach(b => b.disabled = false); return }
+    await loadTopups(); tabsBar(); admWl();
+  };
+  A.querySelectorAll('[data-tok]').forEach(b => b.onclick = () => review(b.dataset.tok, true));
+  A.querySelectorAll('[data-tno]').forEach(b => b.onclick = () => review(b.dataset.tno, false));
+  let AJ = null;
+  A.querySelectorAll('[data-adj]').forEach(b => b.onclick = () => { AJ = b.dataset.adj; const f = $('adjf'); f.hidden = false; f.querySelector('label').firstChild.textContent = `Halaga para kay ${nm(AJ)} (₱, lagyan ng minus para magbawas)`; $('aja').focus() });
+  $('ajs').onclick = async () => {
+    const a = Math.round(Number($('aja').value)), n = $('ajn').value.trim();
+    if (!a) return $('aje').textContent = 'Ilagay ang halaga.'; if (!n) return $('aje').textContent = 'Ilagay ang dahilan.';
+    busy('ajs', true); const { error } = await sb.rpc('wallet_adjust', { t: AJ, a, why: n }); busy('ajs', false);
+    if (error) return $('aje').textContent = 'Hindi na-save: ' + error.message;
+    await loadTopups(); admWl();
+  };
+  $('wss').onclick = async () => {
+    const e = $('wse'), mn = Math.round(Number($('wmin').value)), pc = Math.round(Number($('wpct').value)), dy = Math.round(Number($('wday').value));
+    if (!(mn >= 0) || !(pc >= 0 && pc <= 50) || !(dy >= 0 && dy <= 365)) { e.className = 'err'; e.textContent = 'Ayusin ang mga numero (commission 0 hanggang 50%).'; return }
+    const ti = {}; let bad = ''; ['gcash', 'maya'].forEach(m => { const num = normPhone($('n_' + m).value); if ($('n_' + m).value.trim() && num.length != 11) bad = `Mali ang ${mth(m)} number.`; ti[m] = { number: $('n_' + m).value.trim() ? num : '', name: $('a_' + m).value.trim() } });
+    if (bad) { e.className = 'err'; e.textContent = bad; return }
+    const er = await saveSetting('wallet_required', $('wreq').checked) || await saveSetting('wallet_min', mn) || await saveSetting('commission_pct', pc) || await saveSetting('warranty_days', dy) || await saveSetting('topup_info', ti);
+    if (er) { e.className = 'err'; e.textContent = 'Hindi na-save: ' + er.message; return }
+    WREQ = $('wreq').checked; WMIN = mn; setRate(pc); WDAYS = dy; TOPUP = ti; admWl(); const e2 = $('wse'); e2.className = 'mute'; e2.textContent = 'Na-save na.';
+  };
+}
 // Mga requirement: litrato o PDF ng bawat dokumento, gamit ang pansamantalang link (10 minuto).
 const docTile = (u, k) => { const d = u.docs && u.docs[k]; return `<div class='dc ${d ? '' : 'miss'}'><b>${DOCS[k]}</b><small class='mute'>${d ? esc(d.name || '') + ' · ' + dstr(d.at || Date.now()) : 'Wala pang na-upload'}</small>${d ? `<div class='dv' data-du='${esc(u.id)}' data-dk='${k}'><span class='mute'>Naglo-load…</span></div>` : ''}</div>` };
 async function fillTiles(view) {
