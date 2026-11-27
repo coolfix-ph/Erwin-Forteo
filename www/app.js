@@ -729,6 +729,7 @@ function techDash() {
   const act = J.filter(x => ACTIVE.includes(x.st)).sort((a, b) => (a.st == 'Bago' ? 0 : 1) - (b.st == 'Bago' ? 0 : 1) || bTime(a) - bTime(b));
   const low = wLow(), acc = (id, st, l) => `<button class="btn" data-s="${st}" data-b="${id}" ${low ? 'disabled title="Mag-top up muna"' : ''}>${l}</button>`;
   const card = b => `<div class="jb" id="job-${b.id}"><b>${esc(b.svc)}</b>${b.sched_at ? `<p class="when">${esc(bWhen(b))}</p>` : ''}<p class="mute" style="margin:4px 0">${esc(b.cust_name)}<br>${esc(b.address)}<br>${b.sched_at ? '' : esc(b.sched || '') + ' · '}<b>${fmt(total(b))}</b> sisingilin · <span class="pill">${esc(b.st)}</span></p>
+  ${['Tinanggap', 'Papunta na', 'Dumating na'].includes(b.st) ? `<div class="jmap" data-jm="${b.id}"></div>` : ''}
   ${b.extra_amt ? `<p class="mute" style="margin:0 0 6px;font-size:13px">Kasama ang aprubadong dagdag: ${fmt(b.extra_amt)} (${esc(b.extra_note)})</p>` : ''}
   ${b.st == 'Bago' && low ? `<p class="note">Kulang ang wallet mo para tanggapin ito. <button class="chip" data-gowl>Mag-top up</button></p>` : ''}
   ${b.st == 'Bago' && b.sched_at ? acc(b.id, 'Tinanggap', 'Tanggapin ang schedule') + `<button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Bago' ? acc(b.id, 'Papunta na', 'Tanggapin at pumunta') + `<button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Tinanggap' ? `<button class="btn" data-s="Papunta na" data-b="${b.id}">Papunta na ako</button>` : b.st == 'Papunta na' ? `<button class="btn" data-s="Dumating na" data-b="${b.id}">Dumating na ako</button>` : jobEnd(b)}
@@ -772,6 +773,7 @@ function techDash() {
     const { data } = await sb.from("bookings").select("*").eq("id", id).single(); if (data) upsertTx(data); techDash();
   });
   A.querySelectorAll("[data-s]").forEach(b => b.onclick = async () => { b.disabled = true; const r = await setStatus(+b.dataset.b, b.dataset.s); if (r) { $("de").textContent = r; b.disabled = false } else if (b.dataset.s == 'Papunta na') { const j = TX.find(x => x.id == +b.dataset.b); if (j) techMap(j) } });
+  miniMaps();
   A.querySelectorAll("[data-map]").forEach(b => b.onclick = () => { const j = TX.find(x => x.id == +b.dataset.map); if (j) techMap(j) });
   A.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { const j = TX.find(x => x.id == b.dataset.c); openChatWithCustomer(j) });
   A.querySelectorAll("#tcal [data-day]").forEach(b => b.onclick = () => { TD = b.dataset.day; techDash(); const c = $("tcal"); if (c) c.scrollIntoView({ block: "nearest" }) });
@@ -1155,6 +1157,26 @@ const GM = !!CFG.mapsKey;
 // ---------- Mapa ng technician papunta sa customer ----------
 // Live na lokasyon ng technician (GPS), pin ng customer, ruta (Routes API) at link sa Google Maps para sa turn-by-turn.
 let TM = null;
+// Maliit na mapa sa mismong card ng tinanggap na booking. Iniingatan ang ginawang mapa para hindi na mag-load ulit sa bawat refresh.
+const JM = {};
+async function miniMaps() {
+  for (const ph of A.querySelectorAll("[data-jm]")) {
+    const id = +ph.dataset.jm, b = TX.find(x => x.id == id); if (!b) continue;
+    if (JM[id]) { ph.replaceWith(JM[id].node); continue }
+    const node = document.createElement('div'); node.className = 'jmap'; node.setAttribute('role', 'button'); node.tabIndex = 0; node.setAttribute('aria-label', 'Buksan ang mapa papunta kay ' + first(b.cust_name));
+    node.innerHTML = `<div class="jm-m"></div><span class="jm-t">Mapa · i-tap para sa direksyon</span>`;
+    node.onclick = () => techMap(TX.find(x => x.id == id) || b); node.onkeydown = e => { if (e.key == 'Enter' || e.key == ' ') { e.preventDefault(); node.onclick() } };
+    JM[id] = { node }; ph.replaceWith(node);
+    if (!GM || !await loadGM() || GMBAD) { node.querySelector('.jm-m').innerHTML = `<p class="mute" style="padding:12px;margin:0">${esc(b.address)}</p>`; continue }
+    if (!node.isConnected) { delete JM[id]; continue } // napalitan na ang dashboard habang naglo-load
+    const map = new google.maps.Map(node.querySelector('.jm-m'), { center: C, zoom: 14, disableDefaultUI: true, clickableIcons: false, gestureHandling: 'none', keyboardShortcuts: false });
+    const d = await custPos(b), o = USER.lat != null ? { lat: USER.lat, lng: USER.lng } : null, bb = new google.maps.LatLngBounds();
+    if (d) { new google.maps.Marker({ position: d, map, icon: svgPin(28, '#D93636', 'C') }); bb.extend(d) }
+    if (o) { new google.maps.Marker({ position: o, map, icon: svgPin(24, '#2F7FE0', '', true) }); bb.extend(o) }
+    if (d && o) { const r = await gRoute(o, d); const path = r ? r.path : [o, d]; new google.maps.Polyline({ path, map, strokeColor: '#2F7FE0', strokeWeight: 4, strokeOpacity: .9 }); path.forEach(p => bb.extend(p)); map.fitBounds(bb, 24) }
+    else if (d || o) { map.setCenter(d || o); map.setZoom(15) }
+  }
+}
 const navUrl = (d, addr) => 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' + encodeURIComponent(d ? d.lat + ',' + d.lng : addr);
 async function custPos(b) {
   if (b.cust_lat != null && b.cust_lng != null) return { lat: b.cust_lat, lng: b.cust_lng, exact: true };
@@ -1173,7 +1195,8 @@ async function techMap(b) {
   const acts = () => { const j = TX.find(x => x.id == b.id) || b; $("tma").innerHTML = j.st == 'Tinanggap' ? `<button class="btn alt" id="tmgo">Papunta na ako (sabihan ang customer)</button>` : j.st == 'Papunta na' ? `<button class="btn alt" id="tmgo">Dumating na ako</button>` : '';
     const g = $("tmgo"); if (g) g.onclick = async () => { g.disabled = true; const r = await setStatus(j.id, j.st == 'Tinanggap' ? 'Papunta na' : 'Dumating na'); if (r) { $("tms").textContent = r; g.disabled = false; return } if (j.st == 'Papunta na' || (TX.find(x => x.id == j.id) || {}).st == 'Dumating na') closeTM(); else acts() } };
   acts();
-  if (!GM || !await loadGM()) { $("tmm").innerHTML = `<p class="mute" style="padding:16px">Hindi ma-load ang mapa. Gamitin ang button sa ibaba para buksan ang Google Maps.</p>`; $("tms").textContent = ''; return }
+  if (!TM || TM.el != el) return;
+  if (!GM || !await loadGM() || GMBAD) { if (!$("tmm")) return; $("tmm").innerHTML = `<p class="mute" style="padding:16px">Hindi ma-load ang mapa. Gamitin ang button sa ibaba para buksan ang Google Maps.</p>`; $("tms").textContent = ''; return }
   if (!TM || TM.el != el) return;
   const map = new google.maps.Map($("tmm"), { center: C, zoom: 14, disableDefaultUI: true, zoomControl: true, clickableIcons: false, gestureHandling: 'greedy' });
   const d = await custPos(b); if (!TM || TM.el != el) return;
@@ -1207,7 +1230,8 @@ let GL = false, gmap, gme, gmk = [], gRt = [], GT = 0;
 const svgPin = (px, c, txt, ring) => { const r = px / 2, v = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${px} ${px}">${ring ? `<circle cx="${r}" cy="${r}" r="${r}" fill="${c}" fill-opacity=".25"/>` : ''}<circle cx="${r}" cy="${r}" r="${ring ? r * .45 : r - 1.5}" fill="${c}" stroke="#fff" stroke-width="${ring ? 3 : 2.5}"/>${txt ? `<text x="${r}" y="${r}" dy=".35em" text-anchor="middle" font-family="Arial,sans-serif" font-weight="700" font-size="${px * .42}" fill="#fff">${txt.replace(/[<&]/g, '')}</text>` : ''}</svg>`; return { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(v), scaledSize: new google.maps.Size(px, px), anchor: new google.maps.Point(r, r) } };
 // Marker ng technician: logo ng CoolFix sa loob ng pin. big = napili o sinusundan.
 const techIcon = big => { const w = big ? 50 : 40, h = Math.round(w * 116 / 96); return { url: 'img/tech-pin.png', scaledSize: new google.maps.Size(w, h), anchor: new google.maps.Point(w / 2, h - 2) } };
-window.gm_authFailure = () => { GL = false; $('gm').hidden = true; $('svg').style.display = ''; pins() };
+let GMBAD = false; // tinanggihan ng Google ang key (hal. ibang domain)
+window.gm_authFailure = () => { GMBAD = true; GL = false; $('gm').hidden = true; $('svg').style.display = ''; pins() };
 function loadGM() { return new Promise(r => { if (!GM) return r(false); if (window.google?.maps) return r(true); window.__gm = () => r(true); const s = document.createElement('script'); s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(CFG.mapsKey) + '&callback=__gm&loading=async'; s.onerror = () => r(false); document.head.appendChild(s) }) }
 async function initGM() {
   if (!GM) return initLM();
