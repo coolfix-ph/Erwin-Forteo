@@ -914,7 +914,7 @@ function walletView() {
   <p class="mute" style="font-size:13px">Sa bawat <b>cash</b> na job na natapos, awtomatikong ibinabawas dito ang ${PCT} commission ng CoolFix at ang ${fmt(FEE)} booking fee na sinisingil mo sa customer. Credits ito para sa app at hindi ma-withdraw.</p>
   <h3 style="margin:16px 0 4px">Mag-top up</h3>
   ${pmOn() ? `<div class="pmbox"><b>Bayad online</b><p class="mute" style="margin:2px 0 8px;font-size:13px">GCash, Maya o card. Awtomatikong papasok ang credits pagkabayad, hindi na kailangang hintayin ang admin.</p>
-  <div class="chips" role="group" aria-label="Halaga">${[200, 500, 1000, 2000].map(v => `<button type="button" class="chip" data-pa="${v}">${fmt(v)}</button>`).join('')}</div>
+  <div class="chips" role="group" aria-label="Halaga">${[100, 200, 500, 1000, 2000].map(v => `<button type="button" class="chip" data-pa="${v}">${fmt(v)}</button>`).join('')}</div>
   <label>Halaga (₱)<input type="number" id="pa" min="100" max="50000" step="1" inputmode="numeric" placeholder="hal. 500"></label>
   <p class="err" id="pae" role="alert"></p><button class="btn" id="pas">Magbayad online</button></div>
   ${ways.length ? `<h3 style="margin:16px 0 4px;font-size:15px">O kaya, magpadala at mag-upload ng resibo</h3>` : ''}` : ''}
