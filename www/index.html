@@ -191,6 +191,15 @@ h2+.cert,.t .cert{display:flex;width:max-content;margin:3px 0}.note .cert{margin
 .stats.s4{grid-template-columns:repeat(2,minmax(0,1fr))}
 .mrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}.mrow>div:first-child{flex:1;min-width:0}.mrow small{display:block;color:var(--mute);font-size:12px}.mrow .km{text-align:right;font-weight:700;white-space:nowrap}.mrow .km small{font-weight:400}
 
+.cart{margin:14px 0;border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--bg)}.cart-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}.cart-h b{display:flex;align-items:center;gap:6px}
+.ci{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}.ci>div:first-child{flex:1;min-width:0}.ci small{display:block;color:var(--mute);font-size:12px}.ci .ca{min-width:70px;text-align:right;white-space:nowrap}
+.ci.tot{border:0;padding:3px 0;justify-content:space-between;font-size:14px}.ci.tot small{display:inline}.ci.big{font-size:17px;border-top:1px solid var(--line);margin-top:4px;padding-top:8px}
+.qty{display:flex;align-items:center;gap:6px}.qty .chip{width:32px;height:32px;padding:0;font-size:18px;line-height:1}.qty span{min-width:16px;text-align:center;font-weight:700}
+.sum{margin:12px 0 0;padding:10px 12px;border-radius:12px;background:var(--bg)}
+.sva{display:flex;flex-direction:column;align-items:flex-end;gap:2px}.sva i{font-style:normal;white-space:nowrap;font-size:12px;font-weight:700;color:var(--blue)}.sv[aria-pressed=true] .sva i{color:var(--on)}
+
+.cartbar{position:sticky;bottom:10px;z-index:5;display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;border-radius:14px;background:var(--orange);color:#fff;box-shadow:0 6px 18px rgba(9,18,51,.25)}.cartbar span{flex:1;font-weight:600}.cartbar button{background:#fff;color:var(--orange);border:0;border-radius:99px;padding:8px 14px;font:inherit;font-weight:700;cursor:pointer}
+
 /* Admin: laging dark mode */
 body.adm{--bg:#091233;--panel:#101C4A;--ink:#E8EFFF;--mute:#93A5D6;--line:#22336E;--blue:#5AA5F5;--orange:#8DBBFF;--road:#1A2A66;--block:#0B1640;--park:#10285C;--on:#091233;color-scheme:dark}
 body.adm .err{color:#FF8A80}

@@ -35,7 +35,7 @@ const ACTIVE = ["Bago", "Papunta na", "Dumating na"];
 let USER = null, TECHS = [], TX = [], CONVS = [], PROFILES = [];
 let CAT = cl(DEFCAT), OC = cl(DEFOC), PRICES = { ...DEF };
 let mode = "login", role = "customer", err = "", sset = new Set();
-let TAB = "find", CUR = null, VIEW = "", TRACK = null, svc = "Lahat", sel = null, cat = null, item = null;
+let TAB = "find", CUR = null, VIEW = "", TRACK = null, sel = null, cat = null;
 let channel = null, watchId = null, lastLoc = 0;
 let ED = null, EC = 0, AF = { st: 'Lahat', q: '' };
 let CT = null, FILES = {}, REQ = true, RE = false;
@@ -312,7 +312,7 @@ async function enter() {
   } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs()]); show() }
   else { syncWatch(); show() }
 }
-$("lo").onclick = async () => { stopWatch(); if (channel) sb.removeChannel(channel); channel = null; await sb.auth.signOut(); USER = null; TRACK = null; document.body.classList.remove("adm"); document.documentElement.style.background = ""; mode = "login"; role = "customer"; cat = null; item = null; CT = null; FILES = {}; RE = false; authView() };
+$("lo").onclick = async () => { stopWatch(); if (channel) sb.removeChannel(channel); channel = null; await sb.auth.signOut(); USER = null; TRACK = null; document.body.classList.remove("adm"); document.documentElement.style.background = ""; mode = "login"; role = "customer"; cat = null; CART = []; CT = null; FILES = {}; RE = false; authView() };
 
 // ---------- Navigation ----------
 const rk = () => USER.role == 'customer' ? 'c' : 't';
@@ -342,8 +342,23 @@ function show() {
   else techDash();
 }
 
-// ---------- Customer: find & book ----------
-function list() { const nc = isNC2(item); return TECHS.filter(t => t.online && (!nc || certified(t)) && (svc == "Lahat" || (SVM[svc] || [svc]).some(x => t.s.includes(x)))).sort((a, b) => dist(a) - dist(b)) }
+// ---------- Customer: find & book (cart) ----------
+// CART: mga napiling serbisyo { c: kategorya, t: pangalan ng kategorya, m: uri ng technician, n: serbisyo, p: presyo, q: dami }
+let CART = [];
+const cartN = () => CART.reduce((n, x) => n + x.q, 0), cartSum = () => CART.reduce((n, x) => n + x.p * x.q, 0);
+const cartNC2 = () => CART.some(isNC2);
+const needTags = () => [...new Set(CART.length ? CART.map(x => x.m) : cat ? [cat.m || cat.k] : [])];
+const canDo = (t, tag) => (SVM[tag] || [tag]).some(x => t.s.includes(x));
+function list() { const nc = cartNC2(), tags = needTags(); return TECHS.filter(t => t.online && (!nc || certified(t)) && tags.every(g => canDo(t, g))).sort((a, b) => dist(a) - dist(b)) }
+function cartAdd(c, x) { const i = CART.findIndex(y => y.c == c.k && y.n == x[0]); if (i >= 0) CART[i].q++; else CART.push({ c: c.k, t: c.t, m: c.m || c.k, n: x[0], p: x[1], q: 1 }) }
+const cartLine = x => `${x.t}: ${x.n}${x.q > 1 ? ' ×' + x.q : ''}`;
+function cartBox(editable) {
+  if (!CART.length) return '';
+  return `<div class="cart" id="cart"><div class="cart-h"><b><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M3 4h2l2.4 11h11l2-8H6.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="19" r="1.6" fill="currentColor"/><circle cx="17" cy="19" r="1.6" fill="currentColor"/></svg> Cart mo</b><span class="mute">${cartN()} serbisyo</span></div>
+  ${CART.map((x, i) => `<div class="ci"><div><b>${esc(x.n)}</b>${isNC2(x) ? ' <small class="nct">NC II lang</small>' : ''}<small>${esc(x.t)} · ${fmt(x.p)} bawat isa</small></div>${editable ? `<div class="qty"><button class="chip" data-cq="${i}" data-d="-1" aria-label="Bawasan ang ${esc(x.n)}">−</button><span>${x.q}</span><button class="chip" data-cq="${i}" data-d="1" aria-label="Dagdagan ang ${esc(x.n)}">+</button></div>` : `<span class="mute">×${x.q}</span>`}<b class="ca">${fmt(x.p * x.q)}</b></div>`).join('')}
+  <div class="ci tot"><span>Subtotal ng serbisyo</span><b>${fmt(cartSum())}</b></div>${FEE ? `<div class="ci tot"><span>Booking fee <small class="mute">(para sa CoolFix app)</small></span><b>${fmt(FEE)}</b></div>` : ''}
+  <div class="ci tot big"><span>Tinatayang total</span><b>${fmt(cartSum() + FEE)}</b></div>${editable ? `<p class="mute" style="font-size:12px;margin:4px 0 0">Idadagdag ang Home Service fee at iba pang singil sa susunod na hakbang.</p>` : ''}</div>`;
+}
 function pins() {
   $("pins").innerHTML = list().map((t, i) => `<g class="pin" tabindex="0" data-i="${esc(t.id)}"><circle cx="${t.x}" cy="${t.y}" r="${sel === t ? 4.4 : 3.4}" fill="var(--orange)" stroke="#fff" stroke-width="1"/><text x="${t.x}" y="${t.y + 1.2}" text-anchor="middle" font-size="3" font-weight="700" fill="#fff">${esc(ini(t.n)[0])}</text></g>`).join("");
   document.querySelectorAll(".pin").forEach(p => { p.onclick = () => pick(TECHS.find(t => t.id == p.dataset.i)); p.onkeydown = e => { if (e.key == "Enter") p.onclick() } }); if (GL) gpins();
@@ -354,43 +369,49 @@ const statsHtml = () => `<div><b>${myBookings().length}</b><small>Booking mo</sm
 function home() {
   VIEW = "home"; $("app").hidden = false; A.hidden = true;
   if (GL) gClear(); $("route").innerHTML = ""; sel = null;
-  svc = cat ? (cat.m || cat.k) : "Lahat"; pins();
-  const L = list(), act = myBookings().filter(x => ACTIVE.includes(x.st));
-  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}"><div class="av">${esc(ini(t.n))}</div><div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}<small>${esc(t.s.join(', '))}</small></div><div class="km">${dist(t).toFixed(1)} km<small>~${eta(t)} min</small></div></button>`).join("") || '<p class="mute">Wala pang online na technician para sa serbisyong ito. Subukan ulit mamaya.</p>';
+  pins();
+  const L = list(), act = myBookings().filter(x => ACTIVE.includes(x.st)), inCart = (c, x) => CART.find(y => y.c == c.k && y.n == x[0]);
+  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}"><div class="av">${esc(ini(t.n))}</div><div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}<small>${esc(t.s.join(', '))}</small></div><div class="km">${dist(t).toFixed(1)} km<small>~${eta(t)} min</small></div></button>`).join("") || `<p class="mute">Wala pang online na technician na kaya ${CART.length > 1 ? 'lahat ng nasa cart mo' : 'ang serbisyong ito'}. ${CART.length > 1 ? 'Subukang hatiin sa dalawang booking, o ' : ''}subukan ulit mamaya.</p>`;
   const hd = `<div class='hello'><b>Kumusta, ${esc(first(USER.name))}!</b><span>${TECHS.filter(t => t.online).length} technician ang online ngayon</span></div><div class='stats' id='hstats'>${statsHtml()}</div>${act.length ? `<p class="note">May aktibo kang booking. <button class="chip" id="ab">Tingnan</button></p>` : ""}`;
   let body;
-  if (!cat) body = `<h2>Anong serbisyo ang kailangan mo?</h2><div class="cats">${CAT.map((c, i) => `<button class="cat" data-c="${i}"><b>${esc(c.t)}</b><small>${esc(c.d)}</small></button>`).join("")}</div><p class="mute" style="font-size:13px">Tingnan ang <b>Rate guide</b> tab para sa lahat ng presyo at iba pang singil.</p>`;
-  else body = `<button class="chip" id="cb">‹ Lahat ng serbisyo</button><h2 style="margin:10px 0 2px">${esc(cat.t)}</h2><p class="mute" style="margin:0 0 4px;font-size:13px">${esc(cat.n)}</p>
- ${cat.g.map((g, gi) => `<p class="gh">${esc(g[0])}</p>${g[1].map((x, xi) => `<button class="sv" aria-pressed="${!!item && item.n == x[0] && item.c == cat.k}" data-g="${gi}" data-x="${xi}"><span>${esc(x[0])}${isNC2({ t: cat.t, n: x[0] }) ? ' <small class="nct">NC II lang</small>' : ''}</span><b>${fmt(x[1])}</b></button>`).join("")}`).join("")}
- <h3 style="margin:16px 0 4px">${item ? 'Pumili ng technician' : 'Pumili muna ng serbisyo sa itaas'}</h3>${item ? `${isNC2(item) ? `<p class="note">Para sa kaligtasan, <b>NC II certified</b> na technician lang ang pwede sa ${esc(item.n)}.</p>` : ''}<p class="mute" style="margin:0 0 4px;font-size:13px">${L.length} technician na malapit sa'yo para sa ${esc(item.n)}</p>${tl}` : ''}`;
-  $("panel").innerHTML = hd + body;
+  if (!cat) body = `<h2>${CART.length ? 'Magdagdag pa ng serbisyo' : 'Anong serbisyo ang kailangan mo?'}</h2><div class="cats">${CAT.map((c, i) => `<button class="cat" data-c="${i}"><b>${esc(c.t)}</b><small>${esc(c.d)}</small></button>`).join("")}</div><p class="mute" style="font-size:13px">Pwedeng magdagdag ng ilang serbisyo sa iisang booking. Tingnan ang <b>Rate guide</b> para sa lahat ng presyo.</p>`;
+  else body = `<button class="chip" id="cb">‹ Lahat ng serbisyo</button><h2 style="margin:10px 0 2px">${esc(cat.t)}</h2><p class="mute" style="margin:0 0 4px;font-size:13px">${esc(cat.n)} I-tap para idagdag sa cart.</p>
+ ${cat.g.map((g, gi) => `<p class="gh">${esc(g[0])}</p>${g[1].map((x, xi) => { const c = inCart(cat, x); return `<button class="sv" aria-pressed="${!!c}" data-g="${gi}" data-x="${xi}"><span>${esc(x[0])}${isNC2({ t: cat.t, n: x[0] }) ? ' <small class="nct">NC II lang</small>' : ''}</span><span class="sva"><b>${fmt(x[1])}</b><i>${c ? '✓ ' + c.q : '+ Idagdag'}</i></span></button>` }).join("")}`).join("")}`;
+  const tech = CART.length ? `<h3 style="margin:16px 0 4px">Pumili ng technician</h3>${cartNC2() ? `<p class="note">Para sa kaligtasan, <b>NC II certified</b> na technician lang ang pwede sa ${esc(CART.filter(isNC2).map(x => x.n).join(', '))}.</p>` : ''}<p class="mute" style="margin:0 0 4px;font-size:13px">${L.length} technician na malapit sa'yo na kaya ang lahat ng nasa cart</p>${tl}`
+    : cat ? `<h3 style="margin:16px 0 4px">Pumili muna ng serbisyo sa itaas</h3>` : '';
+  const bar = cat && CART.length ? `<div class="cartbar" role="status"><span>${cartN()} sa cart · ${fmt(cartSum() + FEE)}</span><button id="gocart">Tingnan ang cart</button></div>` : '';
+  $("panel").innerHTML = hd + body + bar + cartBox(true) + tech;
+  if ($("gocart")) $("gocart").onclick = () => $("cart").scrollIntoView({ behavior: "smooth", block: "start" });
   if ($("ab")) $("ab").onclick = () => { TRACK = act[0]; trackView() };
-  document.querySelectorAll(".cat").forEach(b => b.onclick = () => { cat = CAT[b.dataset.c]; item = null; home() });
+  document.querySelectorAll(".cat").forEach(b => b.onclick = () => { cat = CAT[b.dataset.c]; home() });
   if (cat) {
-    $("cb").onclick = () => { cat = null; item = null; home() };
-    document.querySelectorAll(".sv").forEach(b => b.onclick = () => { const x = cat.g[b.dataset.g][1][b.dataset.x]; item = { c: cat.k, n: x[0], p: x[1], t: cat.t }; home() })
+    $("cb").onclick = () => { cat = null; home() };
+    document.querySelectorAll(".sv").forEach(b => b.onclick = () => { cartAdd(cat, cat.g[b.dataset.g][1][b.dataset.x]); home() })
   }
+  document.querySelectorAll("[data-cq]").forEach(b => b.onclick = () => { const x = CART[b.dataset.cq]; x.q += +b.dataset.d; if (x.q < 1) CART.splice(b.dataset.cq, 1); home(); const c = $("cart"); if (c) c.scrollIntoView({ block: "nearest" }) });
   document.querySelectorAll(".t").forEach(c => c.onclick = () => pick(TECHS.find(t => t.id == c.dataset.i)));
 }
 const ocs = o => o.k == 'pct' ? '+' + o.p + '%' : o.k == 'custom' ? 'Custom quotation' : fmt(o.p);
 function pick(t) {
   if (!t) return;
-  if (!item) { sel = t; pins(); $("panel").insertAdjacentHTML("afterbegin", `<p class="note">Pumili muna ng serbisyo bago mag-book kay ${esc(first(t.n))}.</p>`); return }
+  if (!CART.length) { sel = t; pins(); $("panel").insertAdjacentHTML("afterbegin", `<p class="note">Magdagdag muna ng serbisyo sa cart bago mag-book kay ${esc(first(t.n))}.</p>`); return }
   VIEW = "pick"; sel = t; pins();
   const au = OC.filter(o => o.a), opt = OC.map((o, i) => o.a ? '' : `<label class="ck"><input type="checkbox" data-oc="${i}"> ${esc(o.n)} <small>${ocs(o)}</small></label>`).join("");
   $("panel").innerHTML = `<h2>${esc(t.n)}</h2>${certified(t) ? CERT : ''}<p class="mute" style="margin:0">${esc(t.s.join(', '))} · ${dist(t).toFixed(1)} km ang layo</p>
- <div class="price" style="margin-top:12px"><span>${esc(item.t)}<br><b style="font-size:16px">${esc(item.n)}</b></span><span class="mute">${fmt(item.p)}</span></div>
+ ${cartBox(false)}
  ${opt ? `<p class="gh">Dagdag na singil (kung kailangan)</p>${opt}` : ''}
  <label class="mute" style="display:block;margin-top:10px">Address<input id="ad" value="${esc(USER.addr || '')}" placeholder="Bahay/Unit, Kalye, Brgy., Lungsod"></label>${LF || GM ? `<button class="chip adb" id="adm" type="button"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 22c-5-6.5-8-10.5-8-14a8 8 0 0 1 16 0c0 3.5-3 7.5-8 14z" fill="currentColor"/><circle cx="12" cy="8" r="3" fill="var(--panel)"/></svg>Piliin sa mapa ang eksaktong lugar</button>` : ''}
  <label class="mute" style="display:block;margin-top:10px">Oras<select id="tm"><option>Ngayon (~${eta(t)} min)</option><option>Mamayang hapon</option><option>Bukas ng umaga</option></select></label>
- ${FEE ? `<div class="price"><span>Booking fee<br><small class="mute">para sa CoolFix app</small></span><span class="mute">${fmt(FEE)}</span></div>` : ''}<div class="price"><span>Tinatayang bayad${au.length ? `<br><small class="mute">kasama ang ${au.map(o => esc(o.n)).join(', ')}</small>` : ''}</span><b id="pr"></b></div><p class="mute" style="font-size:13px;margin:4px 0 0">Suggested starting rates ito. Maaaring magbago ang huling bayad depende sa aktwal na check ng unit. Hiwalay ang singil sa parte.</p>
+ <div class="sum" id="sum"></div><p class="mute" style="font-size:13px;margin:4px 0 0">Suggested starting rates ito. Maaaring magbago ang huling bayad depende sa aktwal na check ng unit. Hiwalay ang singil sa parte.</p>
  <p class="err" id="be" role="alert"></p>
  <button class="btn" id="bk">I-book si ${esc(first(t.n))}</button>
  <button class="btn alt" id="mg">Mag-message kay ${esc(first(t.n))}</button>
- <button class="btn alt" id="bc">Bumalik sa listahan</button>`;
+ <button class="btn alt" id="bc">Bumalik at baguhin ang cart</button>`;
   const on = i => OC[i].a || !!document.querySelector(`[data-oc="${i}"]:checked`);
-  const est = () => { let a = item.p, p = 0, cu = 0; OC.forEach((o, i) => { if (!on(i)) return; if (o.k == 'fixed') a += o.p; else if (o.k == 'pct') p += o.p / 100; else cu = 1 }); const v = Math.round(a * (1 + p)); return [v, cu] },
-    up = () => { const e = est(); $("pr").textContent = fmt(e[0] + FEE) + (e[1] ? ' + custom' : '') };
+  // Bayad sa serbisyo = subtotal ng cart + fixed na singil, tapos dagdag ang porsyento. Hiwalay ang booking fee.
+  const est = () => { const base = cartSum(), sel = OC.filter((o, i) => on(i)), fx = sel.filter(o => o.k == 'fixed').reduce((n, o) => n + o.p, 0), p = sel.filter(o => o.k == 'pct').reduce((n, o) => n + o.p / 100, 0), cu = sel.some(o => o.k == 'custom');
+    const lines = sel.map(o => o.k == 'fixed' ? [o.n, fmt(o.p)] : o.k == 'pct' ? [o.n + ' (+' + o.p + '%)', fmt(Math.round((base + fx) * o.p / 100))] : [o.n, 'Custom quotation']); return [Math.round((base + fx) * (1 + p)), cu, lines] },
+    up = () => { const [v, cu, lines] = est(); $("sum").innerHTML = `<div class="ci tot"><span>Subtotal ng serbisyo</span><b>${fmt(cartSum())}</b></div>${lines.map(l => `<div class="ci tot"><span>${esc(l[0])}</span><b>${l[1]}</b></div>`).join('')}${FEE ? `<div class="ci tot"><span>Booking fee <small class="mute">(para sa CoolFix app)</small></span><b>${fmt(FEE)}</b></div>` : ''}<div class="ci tot big"><span>Tinatayang total</span><b id="pr">${fmt(v + FEE)}${cu ? ' + custom' : ''}</b></div>` };
   document.querySelectorAll("[data-oc]").forEach(i => i.onchange = up); up();
   $("bc").onclick = home; $("mg").onclick = () => openChat(t);
   if ($("adm")) $("adm").onclick = () => addressPicker(C, v => { if (!v) return; $("ad").value = v.text; C = { lat: v.lat, lng: v.lng }; TECHS.forEach(place); if (GL) mapMe() });
@@ -398,10 +419,11 @@ function pick(t) {
     const ad = $("ad").value.trim(); if (ad.length < 5) { $("be").textContent = "Ilagay ang buong address mo."; return }
     const extras = OC.filter((o, i) => !o.a && on(i)).map(o => o.n);
     busy("bk", true);
-    const { data, error } = await sb.from("bookings").insert({ customer_id: USER.id, tech_id: t.id, cust_name: USER.name, cust_phone: USER.phone || "", tech_name: t.n, svc: item.t + ': ' + item.n + (extras.length ? ' + ' + extras.join(', ') : ''), address: ad, sched: $("tm").value, amt: est()[0], booking_fee: FEE }).select().single();
+    const { data, error } = await sb.from("bookings").insert({ customer_id: USER.id, tech_id: t.id, cust_name: USER.name, cust_phone: USER.phone || "", tech_name: t.n, svc: CART.map(cartLine).join('; ') + (extras.length ? ' + ' + extras.join(', ') : ''), address: ad, sched: $("tm").value, amt: est()[0], booking_fee: FEE }).select().single();
     busy("bk", false);
     if (error) { $("be").textContent = "Hindi na-book: " + error.message; return }
     if (!USER.addr) { USER.addr = ad; sb.from("profiles").update({ addr: ad }).eq("id", USER.id) }
+    CART = []; cat = null;
     TRACK = upsertTx(data); trackView();
   };
 }
@@ -792,7 +814,7 @@ function admSv() {
   $('dcat').onclick = () => { if (ED.c.length < 2) { const e = $('se'); e.className = 'err'; e.textContent = 'Kailangan ng kahit isang kategorya.'; return } ED.c.splice(EC, 1); EC = 0; re() };
   q('[data-do]').forEach(b => b.onclick = () => { ED.o.splice(+b.dataset.do, 1); re() });
   $('ao').onclick = () => { ED.o.push({ n: 'Bagong singil', k: 'fixed', p: 150, a: false }); re() };
-  $('sr').onclick = async () => { CAT = cl(DEFCAT); OC = cl(DEFOC); await saveSetting('catalog', CAT); await saveSetting('other_charges', OC); cat = null; item = null; ED = null; admSv(); const e = $('se'); e.className = 'mute'; e.textContent = 'Naibalik sa default ang mga serbisyo at singil.' };
+  $('sr').onclick = async () => { CAT = cl(DEFCAT); OC = cl(DEFOC); await saveSetting('catalog', CAT); await saveSetting('other_charges', OC); cat = null; CART = []; ED = null; admSv(); const e = $('se'); e.className = 'mute'; e.textContent = 'Naibalik sa default ang mga serbisyo at singil.' };
   $('ss').onclick = async () => {
     const e = $('se'); e.className = 'err'; let m = ''; const bad = v => v === '' || !(v >= 0);
     ED.c.forEach(k => { if (!k.t.trim()) m = m || 'Lagyan ng pangalan ang bawat kategorya.'; if (!k.g.length) m = m || `Walang group ang ${k.t || 'kategorya'}.`; k.g.forEach(g => { if (!g[0].trim()) m = m || `Lagyan ng pangalan ang group sa ${k.t}.`; if (!g[1].length) m = m || `Walang serbisyo ang group na ${g[0]}.`; g[1].forEach(x => { if (!String(x[0]).trim()) m = m || `May serbisyong walang pangalan sa ${k.t}.`; if (bad(x[1])) m = m || `Maglagay ng tamang presyo sa ${x[0]}.` }) }) });
@@ -801,7 +823,7 @@ function admSv() {
     const names = new Set(ED.c.flatMap(k => k.g.flatMap(g => g[1].map(x => x[0])))), nl = ED.n.filter(x => names.has(x));
     const e1 = await saveSetting('catalog', ED.c), e2 = await saveSetting('other_charges', ED.o), e4 = await saveSetting('nc2_only', nl);
     if (e1 || e2 || e4) { e.textContent = 'Hindi na-save: ' + (e1 || e2 || e4).message; return }
-    CAT = cl(ED.c); OC = cl(ED.o); NC2 = nl; cat = null; item = null; ED = null; admSv(); const e3 = $('se'); e3.className = 'mute'; e3.textContent = 'Na-save! Makikita na ito ng mga customer.';
+    CAT = cl(ED.c); OC = cl(ED.o); NC2 = nl; cat = null; CART = []; ED = null; admSv(); const e3 = $('se'); e3.className = 'mute'; e3.textContent = 'Na-save! Makikita na ito ng mga customer.';
   };
 }
 
