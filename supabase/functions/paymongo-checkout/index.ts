@@ -36,8 +36,10 @@ Deno.serve(async (req) => {
   const { data: prof } = await admin.from("profiles").select("id, role, name, email").eq("id", uid).single();
   if (!prof || prof.role !== "technician") return out({ error: "Technician lang ang pwedeng mag-top up." }, 403);
 
-  const { data: on } = await admin.from("settings").select("value").eq("key", "paymongo_on").maybeSingle();
-  if (on?.value !== true) return out({ error: "Naka-off pa ang online na top-up." }, 403);
+  const { data: sets } = await admin.from("settings").select("key, value").in("key", ["paymongo_on", "paymongo_testers"]);
+  const sv = (k: string) => (sets ?? []).find((x) => x.key === k)?.value;
+  const testers = Array.isArray(sv("paymongo_testers")) ? sv("paymongo_testers") as string[] : [];
+  if (sv("paymongo_on") !== true && !testers.includes(uid)) return out({ error: "Naka-off pa ang online na top-up." }, 403);
 
   let body: { amt?: unknown } = {};
   try { body = await req.json(); } catch { /* walang laman */ }

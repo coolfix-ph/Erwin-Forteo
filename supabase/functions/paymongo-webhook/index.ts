@@ -1,5 +1,6 @@
 // CoolFix: tinatawag ng PayMongo kapag bayad na ang checkout. Dito pumapasok ang credits sa Tech Wallet.
-// Kailangang secret: PAYMONGO_SECRET_KEY at PAYMONGO_WEBHOOK_SECRET (whsk_..., galing sa PayMongo webhook).
+// Kailangang secret: PAYMONGO_SECRET_KEY. Ang webhook secret (whsk_...) ay galing sa Secrets (PAYMONGO_WEBHOOK_SECRET)
+// o, kung wala, sa table na pm_config na pinupunan ng paymongo-setup.
 // I-deploy nang walang JWT check (--no-verify-jwt), dahil PayMongo ang tumatawag, hindi ang app.
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -19,7 +20,11 @@ const ok = (msg = "ok", status = 200) => new Response(msg, { status });
 
 Deno.serve(async (req) => {
   const clean = (k: string) => (Deno.env.get(k) ?? "").trim().replace(/^["']|["']$/g, "");
-  const WH = clean("PAYMONGO_WEBHOOK_SECRET"), SK = clean("PAYMONGO_SECRET_KEY");
+  const SK = clean("PAYMONGO_SECRET_KEY");
+  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
+  // Webhook secret: mula sa Secrets, o mula sa pm_config (ginawa ng paymongo-setup)
+  let WH = clean("PAYMONGO_WEBHOOK_SECRET");
+  if (!WH) { const { data } = await admin.from("pm_config").select("value").eq("key", "webhook_secret").maybeSingle(); WH = (data?.value ?? "").trim(); }
   // GET: pang-check lang kung kumpleto ang setup (walang ibinubunyag na key)
   if (req.method === "GET") return new Response(JSON.stringify({ secret_key: /^sk_(test|live)_/.test(SK) ? SK.slice(0, 8) : !!SK, webhook_secret: WH.startsWith("whsk_") ? true : !!WH && "iba ang simula" }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
   if (req.method !== "POST") return ok("POST lang", 405);
@@ -58,7 +63,6 @@ Deno.serve(async (req) => {
   const via = String(pays[0]?.attributes?.source?.type ?? "").replace("paymaya", "maya");
 
   // 3) Ipasok ang credits (isang beses lang, kahit ilang beses tumawag ang PayMongo)
-  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
   const { data, error } = await admin.rpc("pm_paid", { sess, pay_id: pays[0].id, centavos, via });
   if (error) { console.error("pm_paid", error.message); return ok("retry", 500); }
   console.log("pm_paid", sess, data);

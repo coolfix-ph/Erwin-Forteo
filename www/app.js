@@ -14,7 +14,7 @@ const fee = a => Math.round(a * RATE);
 const gross = x => x.final_amt ?? ((x.amt || 0) + (x.extra_amt || 0));
 const comm = x => x.commission ?? Math.round(gross(x) * (x.rate ?? RATE * 100) / 100);
 // Tech Wallet (prepaid credits) at iba pang setting ng bayad.
-let WMIN = 200, WREQ = false, PMON = false, PMRET = '', WDAYS = 30, TOPUP = { gcash: { name: '', number: '' }, maya: { name: '', number: '' } };
+let WMIN = 200, WREQ = false, PMON = false, PMT = [], PMRET = '', WDAYS = 30, TOPUP = { gcash: { name: '', number: '' }, maya: { name: '', number: '' } };
 let WAL = null, WTX = [], TOPS = [], STATS = {};
 const wLow = () => WREQ && (WAL ? WAL.balance : 0) < WMIN;
 const dstr = t => new Date(t).toLocaleDateString("en-PH", { month: "short", day: "numeric" });
@@ -237,6 +237,7 @@ async function loadSettings() {
   if (typeof m.wallet_min == "number") WMIN = Math.max(0, Math.round(m.wallet_min));
   WREQ = m.wallet_required === true;
   PMON = m.paymongo_on === true;
+  PMT = Array.isArray(m.paymongo_testers) ? m.paymongo_testers : [];
   if (typeof m.warranty_days == "number") WDAYS = m.warranty_days;
   if (typeof m.fb_gc == "string") GC_LINK = m.fb_gc;
   if (typeof m.community_link == "string") COMM_LINK = m.community_link;
@@ -897,6 +898,8 @@ function techDash() {
 const WK = { topup: 'Top-up', commission: 'Commission', booking_fee: 'Booking fee', bonus: 'Bonus mula sa CoolFix', adjust: 'Adjustment' };
 const TST = { sinusuri: ['Sinusuri', 'wt'], aprubado: ['Pumasok na', 'ok'], tinanggihan: ['Tinanggihan', 'no'], naghihintay: ['Hindi pa bayad', 'wt'], expired: ['Hindi natuloy', 'no'] };
 const TMTH = { gcash: 'GCash', maya: 'Maya', paymongo: 'Online' };
+// Naka-on para sa lahat, o para lang sa mga sumusubok (paymongo_testers)
+const pmOn = () => PMON || (USER && PMT.includes(USER.id));
 const tmine = x => x.method != 'paymongo' || x.status != 'expired';
 const tpill = s => { const d = TST[s] || TST.sinusuri; return `<span class='pill ${d[1]}'>${d[0]}</span>` };
 function walletMini() {
@@ -910,7 +913,7 @@ function walletView() {
   <div class="wbig${low ? ' low' : ''}"><small>Balance (credits)</small><b>${fmt(b)}</b><span>${low ? `Kulang ang balance mo. Kailangan ng hindi bababa sa ${fmt(WMIN)} para makapag-online at makatanggap ng job.` : WREQ ? `Minimum na balance: ${fmt(WMIN)}` : 'Hindi pa required ang minimum balance.'}</span></div>
   <p class="mute" style="font-size:13px">Sa bawat <b>cash</b> na job na natapos, awtomatikong ibinabawas dito ang ${PCT} commission ng CoolFix at ang ${fmt(FEE)} booking fee na sinisingil mo sa customer. Credits ito para sa app at hindi ma-withdraw.</p>
   <h3 style="margin:16px 0 4px">Mag-top up</h3>
-  ${PMON ? `<div class="pmbox"><b>Bayad online</b><p class="mute" style="margin:2px 0 8px;font-size:13px">GCash, Maya o card. Awtomatikong papasok ang credits pagkabayad, hindi na kailangang hintayin ang admin.</p>
+  ${pmOn() ? `<div class="pmbox"><b>Bayad online</b><p class="mute" style="margin:2px 0 8px;font-size:13px">GCash, Maya o card. Awtomatikong papasok ang credits pagkabayad, hindi na kailangang hintayin ang admin.</p>
   <div class="chips" role="group" aria-label="Halaga">${[200, 500, 1000, 2000].map(v => `<button type="button" class="chip" data-pa="${v}">${fmt(v)}</button>`).join('')}</div>
   <label>Halaga (₱)<input type="number" id="pa" min="100" max="50000" step="1" inputmode="numeric" placeholder="hal. 500"></label>
   <p class="err" id="pae" role="alert"></p><button class="btn" id="pas">Magbayad online</button></div>
@@ -921,7 +924,7 @@ function walletView() {
   <label>Paraan<select id="tmth">${ways.map(m => `<option value="${m}">${m == 'gcash' ? 'GCash' : 'Maya'}</option>`).join('')}</select></label>
   <label>Reference number<input id="tref" maxlength="40" placeholder="Nasa resibo ng GCash/Maya"></label>
   <label>Screenshot ng resibo<input type="file" id="tpf" accept="image/jpeg,image/png"></label>
-  <p class="err" id="tpe" role="alert"></p><button class="btn" id="tps">I-submit ang top-up</button>` : PMON ? '' : `<p class="note">Wala pang nakalagay na GCash o Maya number ng CoolFix para sa top-up. Makipag-ugnayan sa admin.</p>`}
+  <p class="err" id="tpe" role="alert"></p><button class="btn" id="tps">I-submit ang top-up</button>` : pmOn() ? '' : `<p class="note">Wala pang nakalagay na GCash o Maya number ng CoolFix para sa top-up. Makipag-ugnayan sa admin.</p>`}
   ${TOPS.filter(tmine).length ? `<h3 style="margin:18px 0 4px">Mga top-up mo</h3>${TOPS.filter(tmine).map(x => `<div class="row"><span>${fmt(x.amt)} · ${TMTH[x.method] || x.method}${x.paid_with ? ' (' + esc(TMTH[x.paid_with] || x.paid_with) + ')' : ''}<br><small class="mute">${x.method == 'paymongo' ? 'PayMongo' : 'Ref ' + esc(x.ref)} · ${dstr(x.created_at)}${x.status == 'tinanggihan' && x.note ? ' · ' + esc(x.note) : ''}</small></span>${tpill(x.status)}</div>`).join('')}` : ''}
   <h3 style="margin:18px 0 4px">Mga galaw ng wallet</h3>${WTX.length ? WTX.map(x => `<div class="row"><span>${esc(WK[x.kind] || x.kind)}<br><small class="mute">${esc(x.note)} · ${dstr(x.created_at)}</small></span><span style="text-align:right"><b class="${x.amt < 0 ? 'neg' : 'pos'}">${x.amt < 0 ? '−' : '+'}${fmt(Math.abs(x.amt))}</b><br><small class="mute">${fmt(x.balance_after)}</small></span></div>`).join('') : '<p class="mute">Wala pang galaw. Lalabas dito ang mga top-up at ang commission na ibinawas.</p>'}</div>`;
   A.querySelectorAll("[data-ta]").forEach(x => x.onclick = () => { $("ta").value = x.dataset.ta });
