@@ -29,7 +29,7 @@ const DEFCAT = [
 const DEFOC = [{ n: 'Home Service / Dispatch Fee', k: 'fixed', p: 300, a: true }, { n: 'Additional Unit Inspection', k: 'fixed', p: 250, a: false }, { n: 'Emergency Service', k: 'pct', p: 30, a: false }, { n: 'After-hours Service', k: 'pct', p: 20, a: false }, { n: 'Out-of-town Service', k: 'custom', a: false }, { n: 'Ladder / Special Equipment', k: 'fixed', p: 400, a: false }];
 const SVM = { "Aircon cleaning": ["Aircon cleaning"], "Aircon repair": ["Aircon repair", "Freon refill"], "Ref cleaning": ["Ref cleaning"], "Ref repair": ["Ref repair", "Freon refill"] };
 const DEF = { 'Aircon cleaning': 500, 'Aircon repair': 900, 'Aircon install': 2500, 'Ref cleaning': 600, 'Ref repair': 700, 'Freon refill': 650 };
-const ACTIVE = ["Bago", "Papunta na", "Dumating na"];
+const ACTIVE = ["Bago", "Tinanggap", "Papunta na", "Dumating na"];
 
 // ---------- State ----------
 let USER = null, TECHS = [], TX = [], CONVS = [], PROFILES = [];
@@ -391,6 +391,34 @@ function home() {
   document.querySelectorAll("[data-cq]").forEach(b => b.onclick = () => { const x = CART[b.dataset.cq]; x.q += +b.dataset.d; if (x.q < 1) CART.splice(b.dataset.cq, 1); home(); const c = $("cart"); if (c) c.scrollIntoView({ block: "nearest" }) });
   document.querySelectorAll(".t").forEach(c => c.onclick = () => pick(TECHS.find(t => t.id == c.dataset.i)));
 }
+// ---------- Schedule ----------
+// Pumipili ang customer ng petsa (14 na araw) at oras (8 AM hanggang 5 PM). Bawat booking ay may 2 oras na laan.
+const WD = ['Lin', 'Lun', 'Mar', 'Miy', 'Huw', 'Biy', 'Sab'], MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const SLOTS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17], SPAN = 2 * 3600e3, LEAD = 3600e3, DAYS = 14;
+const d0 = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x };
+const dkey = d => { const x = new Date(d); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0') };
+const kdate = k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d) };
+const tlabel = d => { const x = new Date(d), h = x.getHours(); return `${(h + 11) % 12 + 1}:${String(x.getMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}` };
+const dabs = d => { const x = new Date(d); return `${WD[x.getDay()]}, ${MO[x.getMonth()]} ${x.getDate()}` };
+const dlabel = d => { const n = Math.round((d0(d) - d0(new Date())) / 864e5); return (n == 0 ? 'Ngayon, ' : n == 1 ? 'Bukas, ' : '') + dabs(d) };
+const schedLabel = d => `${dlabel(d)} · ${tlabel(d)}`;
+const bWhen = b => b.sched_at ? schedLabel(b.sched_at) : (b.sched || '');
+const bTime = b => b.sched_at ? new Date(b.sched_at).getTime() : b.ts;
+const slotsOf = k => SLOTS.map(h => { const d = kdate(k); d.setHours(h); return d.getTime() });
+const slotOk = (ms, busy) => ms >= Date.now() + LEAD && !busy.some(b => Math.abs(b - ms) < SPAN);
+// Kalendaryo: 7 column (Linggo hanggang Sabado), mula ngayon hanggang 14 na araw. info(d) -> {n, off}
+function calGrid(selK, info) {
+  const t = d0(new Date()), end = new Date(t); end.setDate(t.getDate() + DAYS - 1);
+  const s = new Date(t); s.setDate(t.getDate() - t.getDay());
+  const e = new Date(end); e.setDate(end.getDate() + 6 - end.getDay());
+  const ms = [...new Set([t.getMonth(), end.getMonth()])].map(m => ['Enero', 'Pebrero', 'Marso', 'Abril', 'Mayo', 'Hunyo', 'Hulyo', 'Agosto', 'Setyembre', 'Oktubre', 'Nobyembre', 'Disyembre'][m]).join(' – ');
+  let h = '';
+  for (const d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+    const k = dkey(d), out = d < t || d > end, o = out ? { off: true } : info(d), lbl = `${dabs(d)}${o.n ? `, ${o.n} booking` : ''}${o.off && !out ? ', puno na' : ''}`;
+    h += `<button type="button" class="cd${d.getTime() == t.getTime() ? ' td' : ''}${out ? ' out' : ''}" data-day="${k}" aria-pressed="${k == selK}" aria-label="${lbl}" ${o.off ? 'disabled' : ''}><span>${d.getDate()}</span>${o.n ? `<i>${o.n}</i>` : ''}</button>`;
+  }
+  return `<div class="cal"><div class="calm">${ms} ${end.getFullYear()}</div><div class="calg">${WD.map(w => `<b>${w}</b>`).join('')}${h}</div></div>`;
+}
 const ocs = o => o.k == 'pct' ? '+' + o.p + '%' : o.k == 'custom' ? 'Custom quotation' : fmt(o.p);
 function pick(t) {
   if (!t) return;
@@ -401,7 +429,7 @@ function pick(t) {
  ${cartBox(false)}
  ${opt ? `<p class="gh">Dagdag na singil (kung kailangan)</p>${opt}` : ''}
  <label class="mute" style="display:block;margin-top:10px">Address<input id="ad" value="${esc(USER.addr || '')}" placeholder="Bahay/Unit, Kalye, Brgy., Lungsod"></label>${LF || GM ? `<button class="chip adb" id="adm" type="button"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 22c-5-6.5-8-10.5-8-14a8 8 0 0 1 16 0c0 3.5-3 7.5-8 14z" fill="currentColor"/><circle cx="12" cy="8" r="3" fill="var(--panel)"/></svg>Piliin sa mapa ang eksaktong lugar</button>` : ''}
- <label class="mute" style="display:block;margin-top:10px">Oras<select id="tm"><option>Ngayon (~${eta(t)} min)</option><option>Mamayang hapon</option><option>Bukas ng umaga</option></select></label>
+ <p class="gh">Kailan mo kailangan?</p><div id="sc"></div>
  <div class="sum" id="sum"></div><p class="mute" style="font-size:13px;margin:4px 0 0">Suggested starting rates ito. Maaaring magbago ang huling bayad depende sa aktwal na check ng unit. Hiwalay ang singil sa parte.</p>
  <p class="err" id="be" role="alert"></p>
  <button class="btn" id="bk">I-book si ${esc(first(t.n))}</button>
@@ -413,13 +441,27 @@ function pick(t) {
     const lines = sel.map(o => o.k == 'fixed' ? [o.n, fmt(o.p)] : o.k == 'pct' ? [o.n + ' (+' + o.p + '%)', fmt(Math.round((base + fx) * o.p / 100))] : [o.n, 'Custom quotation']); return [Math.round((base + fx) * (1 + p)), cu, lines] },
     up = () => { const [v, cu, lines] = est(); $("sum").innerHTML = `<div class="ci tot"><span>Subtotal ng serbisyo</span><b>${fmt(cartSum())}</b></div>${lines.map(l => `<div class="ci tot"><span>${esc(l[0])}</span><b>${l[1]}</b></div>`).join('')}${FEE ? `<div class="ci tot"><span>Booking fee <small class="mute">(para sa CoolFix app)</small></span><b>${fmt(FEE)}</b></div>` : ''}<div class="ci tot big"><span>Tinatayang total</span><b id="pr">${fmt(v + FEE)}${cu ? ' + custom' : ''}</b></div>` };
   document.querySelectorAll("[data-oc]").forEach(i => i.onchange = up); up();
+  // Petsa at oras: "Ngayon na" o pumili sa kalendaryo. Tinatago ang oras na may booking na ang technician.
+  let SK = dkey(new Date()), ST = 'now', BUSY = [];
+  const dayOff = d => { const k = dkey(d); return !(k == dkey(new Date())) && !slotsOf(k).some(m => slotOk(m, BUSY)) };
+  const drawSched = () => {
+    if (VIEW != "pick" || !$("sc")) return;
+    const today = SK == dkey(new Date()), sl = slotsOf(SK);
+    $("sc").innerHTML = calGrid(SK, d => ({ off: dayOff(d) })) + `<p class="mute" style="margin:8px 0 4px;font-size:14px">${dlabel(kdate(SK))}</p><div class="slots">${today ? `<button type="button" class="chip" data-tm="now" aria-pressed="${ST == 'now'}">Ngayon na (~${eta(t)} min)</button>` : ''}${sl.map(m => `<button type="button" class="chip" data-tm="${m}" aria-pressed="${ST == m}" ${slotOk(m, BUSY) ? '' : 'disabled'}>${tlabel(m)}</button>`).join('')}</div>${today && !sl.some(m => slotOk(m, BUSY)) ? `<p class="mute" style="font-size:13px;margin:4px 0 0">Wala nang bakanteng oras ngayong araw. Pumili ng ibang petsa sa kalendaryo para mag-schedule.</p>` : ''}<p class="mute" style="font-size:13px;margin:6px 0 0" id="scw">${ST == 'now' ? `Pupunta agad si ${esc(first(t.n))} kapag tinanggap niya.` : `Naka-schedule: <b>${schedLabel(ST)}</b>`}</p>`;
+    $("sc").querySelectorAll("[data-day]").forEach(b => b.onclick = () => { SK = b.dataset.day; ST = SK == dkey(new Date()) ? 'now' : (slotsOf(SK).find(m => slotOk(m, BUSY)) || null); drawSched() });
+    $("sc").querySelectorAll("[data-tm]").forEach(b => b.onclick = () => { ST = b.dataset.tm == 'now' ? 'now' : +b.dataset.tm; drawSched() });
+  };
+  drawSched();
+  if (sb.rpc) sb.rpc("tech_busy", { t: t.id }).then(({ data }) => { BUSY = (data || []).map(x => new Date(typeof x == 'object' && x ? x.tech_busy : x).getTime()).filter(x => x); if (ST != 'now' && ST && !slotOk(ST, BUSY)) ST = null; drawSched() });
   $("bc").onclick = home; $("mg").onclick = () => openChat(t);
   if ($("adm")) $("adm").onclick = () => addressPicker(C, v => { if (!v) return; $("ad").value = v.text; C = { lat: v.lat, lng: v.lng }; TECHS.forEach(place); if (GL) mapMe() });
   $("bk").onclick = async () => {
     const ad = $("ad").value.trim(); if (ad.length < 5) { $("be").textContent = "Ilagay ang buong address mo."; return }
+    if (ST == null) { $("be").textContent = "Pumili ng oras sa kalendaryo."; return }
+    if (ST != 'now' && !slotOk(ST, BUSY)) { $("be").textContent = "Hindi na pwede ang oras na iyon. Pumili ng ibang oras."; drawSched(); return }
     const extras = OC.filter((o, i) => !o.a && on(i)).map(o => o.n);
     busy("bk", true);
-    const { data, error } = await sb.from("bookings").insert({ customer_id: USER.id, tech_id: t.id, cust_name: USER.name, cust_phone: USER.phone || "", tech_name: t.n, svc: CART.map(cartLine).join('; ') + (extras.length ? ' + ' + extras.join(', ') : ''), address: ad, sched: $("tm").value, amt: est()[0], booking_fee: FEE }).select().single();
+    const { data, error } = await sb.from("bookings").insert({ customer_id: USER.id, tech_id: t.id, cust_name: USER.name, cust_phone: USER.phone || "", tech_name: t.n, svc: CART.map(cartLine).join('; ') + (extras.length ? ' + ' + extras.join(', ') : ''), address: ad, sched: ST == 'now' ? `Ngayon (~${eta(t)} min)` : `${dabs(ST)} · ${tlabel(ST)}`, sched_at: ST == 'now' ? null : new Date(ST).toISOString(), amt: est()[0], booking_fee: FEE }).select().single();
     busy("bk", false);
     if (error) { $("be").textContent = "Hindi na-book: " + error.message; return }
     if (!USER.addr) { USER.addr = ad; sb.from("profiles").update({ addr: ad }).eq("id", USER.id) }
@@ -427,7 +469,7 @@ function pick(t) {
     TRACK = upsertTx(data); trackView();
   };
 }
-const STEPS = ["Hinihintay ang sagot ng technician", "Papunta na", "Dumating na", "Tapos na ang trabaho"];
+const STEPS = ["Hinihintay ang sagot ng technician", "Tinanggap ng technician", "Papunta na", "Dumating na", "Tapos na ang trabaho"];
 function trackView() {
   const b = TRACK; if (!b) return home();
   VIEW = "track"; $("app").hidden = false; A.hidden = true;
@@ -437,16 +479,16 @@ function trackView() {
   const p = [[t.x, t.y], [50, t.y], [50, 50]];
   $("route").innerHTML = ACTIVE.includes(b.st) ? `<polyline points="${p.map(q => q.join(",")).join(" ")}" fill="none" stroke="var(--blue)" stroke-width="1.2" stroke-dasharray="2 2"/>` : "";
   if (GL) gtrack(t, b);
-  const stage = { "Bago": 0, "Papunta na": 1, "Dumating na": 2, "Natapos": 3 }[b.st];
-  const big = b.st == "Bago" ? "Naghihintay…" : b.st == "Papunta na" ? `~${eta(t)} min` : b.st == "Dumating na" ? "Dumating na!" : b.st == "Natapos" ? "Tapos na!" : b.st;
-  const sub = b.st == "Papunta na" ? `${dist(t).toFixed(1)} km ang layo` : b.st == "Tinanggihan" ? "Hindi available ang technician. Pumili ng iba." : b.st == "Kinansela" ? "Kinansela ang booking na ito." : "";
+  const stage = { "Bago": 0, "Tinanggap": 1, "Papunta na": 2, "Dumating na": 3, "Natapos": 4 }[b.st];
+  const big = b.st == "Bago" ? "Naghihintay…" : b.st == "Tinanggap" ? "Naka-schedule" : b.st == "Papunta na" ? `~${eta(t)} min` : b.st == "Dumating na" ? "Dumating na!" : b.st == "Natapos" ? "Tapos na!" : b.st;
+  const sub = b.st == "Tinanggap" ? `Darating si ${esc(first(b.tech_name))} sa ${esc(bWhen(b))}` : b.st == "Papunta na" ? `${dist(t).toFixed(1)} km ang layo` : b.st == "Tinanggihan" ? "Hindi available ang technician. Pumili ng iba." : b.st == "Kinansela" ? "Kinansela ang booking na ito." : "";
   $("panel").innerHTML = `<h2>Booking ${esc(b.code || '')} · ${esc(first(b.tech_name))}</h2>
  <p class="mute" style="margin:0 0 12px">${esc(b.svc)} · ${esc(b.address)}</p>
  <div class="eta">${big}</div><div class="mute">${sub}</div>
  ${stage != null ? `<ul class="steps">${STEPS.map((s, i) => `<li class="${i <= stage ? 'on' : ''}">${s}</li>`).join('')}</ul>` : ''}
- <div class="row"><span class="mute">Tinatayang bayad${b.booking_fee ? `<br><small>kasama ang ${fmt(b.booking_fee)} booking fee</small>` : ''}</span><b>${fmt(total(b))}</b></div>
+ ${bWhen(b) ? `<div class="row"><span class="mute">Schedule</span><b>${esc(bWhen(b))}</b></div>` : ''}<div class="row"><span class="mute">Tinatayang bayad${b.booking_fee ? `<br><small>kasama ang ${fmt(b.booking_fee)} booking fee</small>` : ''}</span><b>${fmt(total(b))}</b></div>
  <button class="btn" id="tc">Mag-message sa technician</button>
- ${["Bago", "Papunta na"].includes(b.st) ? `<button class="btn alt" id="cx">Kanselahin ang booking</button>` : ""}
+ ${["Bago", "Tinanggap", "Papunta na"].includes(b.st) ? `<button class="btn alt" id="cx">Kanselahin ang booking</button>` : ""}
  <button class="btn alt" id="bh">Bumalik</button><p class="err" id="te" role="alert"></p>`;
   $("tc").onclick = () => openChat(t);
   $("bh").onclick = () => { TRACK = null; home() };
@@ -521,20 +563,32 @@ async function voucher(t, k, jobs) {
   d.save(`CoolFix-Voucher-${k}-${String(t.name || 'technician').replace(/[^a-z0-9]+/gi, '-')}.pdf`);
   return '';
 }
+// Kalendaryo ng technician: mga naka-schedule na booking sa susunod na 14 na araw.
+let TD = null;
+function techCal(J) {
+  const up = J.filter(x => ACTIVE.includes(x.st) && x.sched_at), cnt = {};
+  up.forEach(x => { const k = dkey(x.sched_at); cnt[k] = (cnt[k] || 0) + 1 });
+  const end = d0(new Date()); end.setDate(end.getDate() + DAYS);
+  const ahead = up.filter(x => new Date(x.sched_at) >= d0(new Date()) && new Date(x.sched_at) < end).length;
+  if (!TD || kdate(TD) < d0(new Date())) TD = dkey(new Date());
+  const L = up.filter(x => dkey(x.sched_at) == TD).sort((a, b) => bTime(a) - bTime(b));
+  return `<div class="jb calbox" id="tcal"><b>Kalendaryo ng schedule</b><p class="mute" style="margin:2px 0 8px;font-size:13px">${ahead ? `${ahead} naka-schedule na booking sa susunod na ${DAYS} araw. I-tap ang petsa para makita.` : `Wala pang naka-schedule na booking sa susunod na ${DAYS} araw.`}</p>${calGrid(TD, d => ({ n: cnt[dkey(d)] || 0 }))}
+  <p class="gh">${esc(dlabel(kdate(TD)))}</p>${L.length ? L.map(b => `<button type="button" class="ag" data-job="${b.id}"><span class="agt">${tlabel(b.sched_at)}</span><span class="agd"><b>${esc(b.svc)}</b><small>${esc(b.cust_name)} · ${esc(b.address)}</small></span><span class="pill">${esc(b.st)}</span></button>`).join('') : `<p class="mute" style="margin:0;font-size:14px">Walang naka-schedule sa araw na ito.</p>`}</div>`;
+}
 function techDash() {
   VIEW = "dash"; const u = USER, J = myJobs();
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const done = J.filter(x => x.st == 'Natapos'), earn = done.filter(x => new Date(x.updated_at) >= today).reduce((n, x) => n + x.amt - fee(x.amt), 0);
-  const act = J.filter(x => ACTIVE.includes(x.st)).sort((a, b) => a.ts - b.ts);
-  const card = b => `<div class="jb"><b>${esc(b.svc)}</b><p class="mute" style="margin:4px 0">${esc(b.cust_name)}${b.cust_phone ? ' · <a href="tel:' + esc(b.cust_phone) + '">' + esc(b.cust_phone) + '</a>' : ''}<br>${esc(b.address)}<br>${esc(b.sched || '')} · ${fmt(b.amt)} · <span class="pill">${esc(b.st)}</span></p>
-  ${b.st == 'Bago' ? `<button class="btn" data-s="Papunta na" data-b="${b.id}">Tanggapin at pumunta</button><button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Papunta na' ? `<button class="btn" data-s="Dumating na" data-b="${b.id}">Dumating na ako</button>` : `<button class="btn" data-s="Natapos" data-b="${b.id}">Tapos na ang trabaho</button>`}
+  const act = J.filter(x => ACTIVE.includes(x.st)).sort((a, b) => (a.st == 'Bago' ? 0 : 1) - (b.st == 'Bago' ? 0 : 1) || bTime(a) - bTime(b));
+  const card = b => `<div class="jb" id="job-${b.id}"><b>${esc(b.svc)}</b>${b.sched_at ? `<p class="when">${esc(bWhen(b))}</p>` : ''}<p class="mute" style="margin:4px 0">${esc(b.cust_name)}${b.cust_phone ? ' · <a href="tel:' + esc(b.cust_phone) + '">' + esc(b.cust_phone) + '</a>' : ''}<br>${esc(b.address)}<br>${b.sched_at ? '' : esc(b.sched || '') + ' · '}${fmt(b.amt)} · <span class="pill">${esc(b.st)}</span></p>
+  ${b.st == 'Bago' && b.sched_at ? `<button class="btn" data-s="Tinanggap" data-b="${b.id}">Tanggapin ang schedule</button><button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Bago' ? `<button class="btn" data-s="Papunta na" data-b="${b.id}">Tanggapin at pumunta</button><button class="btn alt" data-s="Tinanggihan" data-b="${b.id}">Tanggihan</button>` : b.st == 'Tinanggap' ? `<button class="btn" data-s="Papunta na" data-b="${b.id}">Papunta na ako</button>` : b.st == 'Papunta na' ? `<button class="btn" data-s="Dumating na" data-b="${b.id}">Dumating na ako</button>` : `<button class="btn" data-s="Natapos" data-b="${b.id}">Tapos na ang trabaho</button>`}
   <button class="btn alt" data-c="${b.id}">Mag-message sa customer</button></div>`;
   const ds = u.doc_status || "kulang", lock = !u.online && (REQ ? ds != "aprubado" : !["sinusuri", "aprubado"].includes(ds)), noId = !(u.docs && u.docs.vid), form = ds != "sinusuri" || RE || noId;
   const docBox = ds == "aprubado" && !RE && !noId ? `<p class="mute" style="margin:6px 0 0">Dokumento: ${ctName(u.cert_type)} ${dpill(ds)} <button class="chip" id="reup" style="padding:2px 9px;font-size:12px">Palitan</button></p>${u.cert_type == 'nc2' ? `<p class="note">${CERT} Makikita ng mga customer ang badge mo, at pwede kang tumanggap ng installation at major repair.</p>` : `<p class="note">Mag-upload ng <b>NC II</b> para magkaroon ng NC II Certified badge at makatanggap ng installation at major repair (hal. compressor, refrigerant).</p>`}`
     : `<div class="jb doc ${ds}"><b>${noId && ds != "kulang" ? "Kailangan na rin ng Valid ID" : ds == "aprubado" ? "Palitan ang dokumento" : ds == "sinusuri" ? "Sinusuri na ng admin ang dokumento mo" : ds == "tinanggihan" ? "Hindi naaprubahan ang dokumento mo" : "Kailangan ng dokumento bago makatanggap ng booking"}</b>
     <p class="mute" style="margin:4px 0">${noId && ds != "kulang" ? `Bagong requirement ang valid ID para sa lahat ng technician. I-upload ito sa ibaba.${ds == "aprubado" ? " Susuriin ulit ito ng admin, kaya hindi ka muna makakapag-online hangga't hindi naaaprubahan." : ""}` : ds == "sinusuri" && !RE ? `${ctName(u.cert_type)} · ${REQ ? "Makakapag-online ka kapag naaprubahan na ng admin." : "Pwede ka nang mag-online habang sinusuri."}` : ds == "tinanggihan" ? `Dahilan: ${esc(u.doc_note || "—")}. Mag-upload ulit ng malinaw na kopya.` : ds == "aprubado" ? "Kapag nagpalit ka, susuriin ulit ito ng admin at hindi ka muna makakapag-online." : "I-upload ang valid ID at NC II certificate mo. Kung walang NC II, ang DTI Business Permit at BIR COR (Form 2303)."}</p>
     ${form ? `<div id="dz"></div><p class="err" id="dze" role="alert"></p><button class="btn" id="dsub">I-submit ang dokumento</button>${RE ? `<button class="btn alt" id="dcx">Huwag na</button>` : ""}` : `<button class="chip" id="reup">Palitan ang dokumento</button>`}</div>`;
-  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p>${docBox}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><button class="btn ${u.online ? "" : "alt"}" id="ol" ${lock ? "disabled" : ""}>${u.online ? "Online ka (i-tap para mag-offline)" : lock ? (ds == "sinusuri" ? "Hinihintay ang pag-apruba ng dokumento" : "I-upload muna ang dokumento para mag-online") : "Offline ka (i-tap para mag-online)"}</button><p class="err" id="de" role="alert"></p><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<p class="err" id="pe" role="alert"></p></div>`;
+  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p>${docBox}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><button class="btn ${u.online ? "" : "alt"}" id="ol" ${lock ? "disabled" : ""}>${u.online ? "Online ka (i-tap para mag-offline)" : lock ? (ds == "sinusuri" ? "Hinihintay ang pag-apruba ng dokumento" : "I-upload muna ang dokumento para mag-online") : "Offline ka (i-tap para mag-online)"}</button><p class="err" id="de" role="alert"></p>${techCal(J)}<h3 style="margin:16px 0 4px">Mga aktibong booking</h3><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<p class="err" id="pe" role="alert"></p></div>`;
   if ($("dz")) { if (!CT) CT = u.cert_type || null; mountDocs($("dz")) }
   if ($("reup")) $("reup").onclick = () => { RE = true; techDash() };
   if ($("dcx")) $("dcx").onclick = () => { RE = false; FILES = {}; techDash() };
@@ -556,6 +610,8 @@ function techDash() {
   };
   A.querySelectorAll("[data-s]").forEach(b => b.onclick = async () => { b.disabled = true; const r = await setStatus(+b.dataset.b, b.dataset.s); if (r) { $("de").textContent = r; b.disabled = false } });
   A.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { const j = TX.find(x => x.id == b.dataset.c); openChatWithCustomer(j) });
+  A.querySelectorAll("#tcal [data-day]").forEach(b => b.onclick = () => { TD = b.dataset.day; techDash(); const c = $("tcal"); if (c) c.scrollIntoView({ block: "nearest" }) });
+  A.querySelectorAll("[data-job]").forEach(b => b.onclick = () => { const c = $("job-" + b.dataset.job); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("flash"); setTimeout(() => c.classList.remove("flash"), 1200) } });
   A.querySelectorAll("[data-pdf]").forEach(b => b.onclick = async () => { const o = byMonth(myJobs()).find(m => m.k == b.dataset.pdf); b.disabled = true; b.textContent = "…"; const e = await voucher(USER, b.dataset.pdf, o ? o.jobs : []); b.disabled = false; b.textContent = "PDF"; $("pe").textContent = e });
 }
 // While on the way to a customer, share the technician's live location.
@@ -675,7 +731,7 @@ function admOv() {
   const raw = Math.max(...days.map(x => x.v)), step = raw <= 0 ? 1000 : Math.pow(10, Math.floor(Math.log10(raw))) * (raw / Math.pow(10, Math.floor(Math.log10(raw))) > 5 ? 2 : raw / Math.pow(10, Math.floor(Math.log10(raw))) > 2 ? 1 : .5), mx = Math.max(step, Math.ceil(raw * 1.08 / step) * step);
   const ticks = [mx, mx / 2, 0], peak = days.reduce((m, x, i) => x.v > days[m].v ? i : m, 0);
   const lbl = (d, i) => AP <= 7 ? d.toLocaleDateString('en-PH', { weekday: 'short' }) : (i % 5 == 0 || i == AP - 1) ? d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }) : '';
-  const SS = ['Bago', 'Papunta na', 'Dumating na', 'Natapos', 'Kinansela', 'Tinanggihan'], sc = SS.map(s => [s, cur.filter(x => x.st == s).length]), smx = Math.max(1, ...sc.map(x => x[1]));
+  const SS = ['Bago', 'Tinanggap', 'Papunta na', 'Dumating na', 'Natapos', 'Kinansela', 'Tinanggihan'], sc = SS.map(s => [s, cur.filter(x => x.st == s).length]), smx = Math.max(1, ...sc.map(x => x[1]));
   const tm = {}; done(cur).forEach(x => { const o = tm[x.tech_id] = tm[x.tech_id] || { n: x.tech_name, g: 0, j: 0 }; o.g += x.amt; o.j++ });
   const top = Object.values(tm).sort((a, b) => b.g - a.g).slice(0, 5), recent = [...TX].sort((a, b) => b.ts - a.ts).slice(0, 6);
   const pill = s => `<span class='pill ${s == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(s) ? 'no' : ''}'>${esc(s)}</span>`;
@@ -715,9 +771,9 @@ function admOv() {
   });
 }
 function admTx() {
-  const S = ['Lahat', 'Bago', 'Papunta na', 'Dumating na', 'Natapos', 'Kinansela', 'Tinanggihan'], q = AF.q.toLowerCase();
+  const S = ['Lahat', 'Bago', 'Tinanggap', 'Papunta na', 'Dumating na', 'Natapos', 'Kinansela', 'Tinanggihan'], q = AF.q.toLowerCase();
   const L = TX.filter(x => (AF.st == 'Lahat' || x.st == AF.st) && (x.tech + x.cust + x.svc + x.code).toLowerCase().includes(q)).sort((a, b) => b.ts - a.ts);
-  A.innerHTML = `<div class='panel au wide'><h2>Mga transaction</h2><div class='chips'>${S.map(s => `<button class='chip' aria-pressed='${AF.st == s}' data-s='${s}'>${s}</button>`).join('')}</div><input id='aq' placeholder='Hanapin: technician, customer, serbisyo' value='${esc(AF.q)}'><div class='tw'><table><thead><tr><th>ID</th><th>Petsa</th><th>Customer</th><th>Technician</th><th>Serbisyo</th><th>Bayad sa serbisyo</th><th>Booking fee</th><th>Fee (${PCT})</th><th>Status</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.code)}</td><td>${dstr(x.ts)}</td><td>${esc(x.cust)}</td><td>${esc(x.tech)}</td><td>${esc(x.svc)}</td><td>${fmt(x.amt)}</td><td>${fmt(x.booking_fee || 0)}</td><td>${x.st == 'Natapos' ? fmt(fee(x.amt)) : '—'}</td><td><span class='pill ${x.st == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(x.st) ? 'no' : ''}'>${esc(x.st)}</span></td></tr>`).join('') || `<tr><td colspan='9' class='mute'>Walang transaction na tugma.</td></tr>`}</tbody></table></div><p class='mute'>${L.length} transaction · Kabuuang natapos: ${fmt(L.filter(x => x.st == 'Natapos').reduce((n, x) => n + x.amt, 0))}</p></div>`;
+  A.innerHTML = `<div class='panel au wide'><h2>Mga transaction</h2><div class='chips'>${S.map(s => `<button class='chip' aria-pressed='${AF.st == s}' data-s='${s}'>${s}</button>`).join('')}</div><input id='aq' placeholder='Hanapin: technician, customer, serbisyo' value='${esc(AF.q)}'><div class='tw'><table><thead><tr><th>ID</th><th>Petsa</th><th>Schedule</th><th>Customer</th><th>Technician</th><th>Serbisyo</th><th>Bayad sa serbisyo</th><th>Booking fee</th><th>Fee (${PCT})</th><th>Status</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.code)}</td><td>${dstr(x.ts)}</td><td>${esc(x.sched_at ? dabs(x.sched_at) + ' · ' + tlabel(x.sched_at) : x.sched || '—')}</td><td>${esc(x.cust)}</td><td>${esc(x.tech)}</td><td>${esc(x.svc)}</td><td>${fmt(x.amt)}</td><td>${fmt(x.booking_fee || 0)}</td><td>${x.st == 'Natapos' ? fmt(fee(x.amt)) : '—'}</td><td><span class='pill ${x.st == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(x.st) ? 'no' : ''}'>${esc(x.st)}</span></td></tr>`).join('') || `<tr><td colspan='9' class='mute'>Walang transaction na tugma.</td></tr>`}</tbody></table></div><p class='mute'>${L.length} transaction · Kabuuang natapos: ${fmt(L.filter(x => x.st == 'Natapos').reduce((n, x) => n + x.amt, 0))}</p></div>`;
   A.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { AF.st = b.dataset.s; admTx() });
   $('aq').oninput = e => { AF.q = e.target.value; admTx(); const i = $('aq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length) };
 }
