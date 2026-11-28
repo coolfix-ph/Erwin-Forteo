@@ -1253,7 +1253,7 @@ function admOv() {
   const dev = {}; INST.forEach(x => { const t = tms(x.created_at); if (!dev[x.device] || t < dev[x.device].t) dev[x.device] = { t, p: x.platform } });
   const DV = Object.values(dev), ni = DV.filter(x => inP(x.t, st, NOW)).length, nip = DV.filter(x => inP(x.t, pst, st)).length;
   const PF = [['android', 'Android'], ['iphone', 'iPhone'], ['desktop', 'Computer'], ['iba', 'Iba pa']].map(([k, l]) => [l, DV.filter(x => x.p == k).length]).filter((x, i) => i < 3 || x[1]), pmx = Math.max(1, ...PF.map(x => x[1]));
-  const since = INST.length ? new Date(tms(INST[0].created_at)).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+  const since = DV.length ? new Date(Math.min(...DV.map(x => x.t))).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
   A.innerHTML = `<div class='dash'>${pend ? `<p class='note'><b>${pend}</b> technician ang naghihintay ng pag-apruba ng dokumento. <button class='chip' id='gotc'>Suriin</button></p>` : ''}
   <div class='dh'><div><h2>Overview</h2><p class='mute'>${t0.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p></div>
    <div class='chips' role='group' aria-label='Period'>${[[1, 'Ngayon'], [7, '7 araw'], [30, '30 araw']].map(([n, l]) => `<button class='chip' aria-pressed='${AP == n}' data-ap='${n}'>${l}</button>`).join('')}</div></div>
@@ -1272,7 +1272,7 @@ function admOv() {
   <div class='grid2'>
    <section class='card' id='ovacc'><div class='ch'><h3>Mga nag-create ng account</h3><span class='mute'>${accs.length} lahat</span></div>
     <div class='hero sm'><b>${na}</b><span class='mute'>bagong account ${pl}</span><small class='mute'>${dl(na, nap)}</small></div>
-    <div class='mini'><div><b>${custs.length}<small> +${nCur(custs)}</small></b><span>Customer</span></div><div><b>${techs.length}<small> +${nCur(techs)}</small></b><span>Technician</span></div></div>
+    <div class='mini'><div><b>${custs.length}</b><span>Customer · +${nCur(custs)} bago</span></div><div><b>${techs.length}</b><span>Technician · +${nCur(techs)} bago</span></div></div>
    </section>
    <section class='card' id='ovapp'><div class='ch'><h3>Nag-download ng app</h3><span class='mute'>${DV.length} device lahat</span></div>
     <div class='hero sm'><b>${ni}</b><span class='mute'>bagong install ${pl}</span><small class='mute'>${dl(ni, nip)}</small></div>

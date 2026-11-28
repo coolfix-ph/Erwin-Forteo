@@ -14,9 +14,10 @@
   const android = /android/i.test(ua);
   // Bilang ng install para sa admin (016_app_installs.sql). Isang beses lang kada device at paraan.
   // Sa iPhone, walang install event, kaya nabibilang lang ito kapag binuksan na mula sa home screen.
+  const logging = {};
   function logInstall(via) {
     try {
-      const done = "cf_inst_" + via; if (localStorage.getItem(done)) return;
+      const done = "cf_inst_" + via; if (logging[via] || localStorage.getItem(done)) return; logging[via] = 1;
       let dev = localStorage.getItem("cf_dev");
       if (!dev) { dev = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12)); localStorage.setItem("cf_dev", dev) }
       const C = W.COOLFIX_CONFIG || {}; if (!C.supabaseUrl || !C.supabaseAnonKey) return;
@@ -24,7 +25,7 @@
         method: "POST", keepalive: true,
         headers: { "content-type": "application/json", apikey: C.supabaseAnonKey },
         body: JSON.stringify({ p_device: dev, p_platform: ios ? "iphone" : android ? "android" : "desktop", p_via: via })
-      }).then(r => { if (r.ok) localStorage.setItem(done, Date.now()) }).catch(() => { });
+      }).then(r => { if (r.ok) localStorage.setItem(done, Date.now()); else logging[via] = 0 }).catch(() => { logging[via] = 0 });
     } catch (e) { }
   }
   W.addEventListener("appinstalled", () => logInstall("install"));
