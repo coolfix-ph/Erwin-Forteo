@@ -3,6 +3,7 @@
 // - Pahina (index.html): laging kinukuha muna sa internet para laging bago ang app; cache lang kapag offline.
 // - app.js/config.js na may ?v=: naka-cache ayon sa version, kaya bagong file agad kapag pinalitan ang ?v=.
 // - Iba pang file (vendor, img): ipinapakita ang naka-cache, tapos ina-update sa likod.
+// - Push notification (017): ipinapakita ang abiso kahit sarado ang app; pagpindot, bubuksan ang booking o chat.
 const CACHE = "coolfix-v1";
 const SHELL = ["./", "manifest.webmanifest", "img/logo.png", "img/favicon.png", "img/icons/icon-192.png"];
 
@@ -58,4 +59,23 @@ self.addEventListener("fetch", e => {
     if (hit) { e.waitUntil(net); return hit }
     return net;
   }));
+});
+
+self.addEventListener("push", e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {} } catch (x) { d = { t: "CoolFix", b: e.data ? e.data.text() : "" } }
+  e.waitUntil(self.registration.showNotification(d.t || "CoolFix", {
+    body: d.b || "", icon: "img/icons/icon-192.png", tag: d.g || undefined, renotify: !!d.g,
+    data: { u: d.u || "./" }, vibrate: [200, 100, 200]
+  }));
+});
+
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  const u = new URL((e.notification.data && e.notification.data.u) || "./", self.registration.scope).href;
+  e.waitUntil((async () => {
+    const cs = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const c of cs) if (c.url.startsWith(self.registration.scope) && "focus" in c) { await c.focus(); c.postMessage({ cf: "open", u }); return }
+    await self.clients.openWindow(u);
+  })());
 });

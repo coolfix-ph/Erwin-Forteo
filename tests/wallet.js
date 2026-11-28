@@ -8,7 +8,7 @@ const ok = (c, m) => { if (!c) throw new Error("FAIL: " + m); console.log("ok -"
 (async () => {
   await new Promise(r => srv.listen(0, r)); const url = `http://localhost:${srv.address().port}/`;
   const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 420, height: 900 }, deviceScaleFactor: 2, geolocation: { latitude: 14.68, longitude: 121.05 }, permissions: ["geolocation"] }); const p = await ctx.newPage();
-  const errs = []; p.on("pageerror", e => errs.push(e.message));
+  const errs = []; p.on("pageerror", e => { if (!/googleapis/.test(e.stack || "")) errs.push(e.message) });
   const shot = async n => { if (SHOTS) await p.screenshot({ path: path.join(SHOTS, n + ".png"), fullPage: true }) };
   await ctx.addInitScript(() => { localStorage.setItem("cf_terms", "2026-11-27"); localStorage.setItem("cf_loc", "1") });
   await p.route("**/vendor/supabase.js", r => r.fulfill({ contentType: "application/javascript", body: fs.readFileSync(path.join(__dirname, "mock-supabase.js"), "utf8") }));
@@ -62,7 +62,7 @@ const ok = (c, m) => { if (!c) throw new Error("FAIL: " + m); console.log("ok -"
   // 5) Technician: walang numero ng customer, magpadala ng quote
   await login("rodel");
   ok(!(await p.textContent("#auth")).includes("09181234567"), "technician cannot see the customer's phone");
-  for (const s of ["Papunta na", "Dumating na"]) { await p.click(`[data-s="${s}"]`); await p.waitForTimeout(300) }
+  for (const s of ["Papunta na", "Dumating na"]) { await p.click(`[data-s="${s}"]`); await p.waitForTimeout(300); if (await p.isVisible("#tmx")) { await p.click("#tmx"); await p.waitForTimeout(200) } }
   await p.click(".qf summary"); await p.fill(`#qa-${bk.id}`, "800"); await p.fill(`#qn-${bk.id}`, "Bagong capacitor at labor"); await p.click(`[data-q="${bk.id}"]`); await p.waitForTimeout(300);
   ok(await p.evaluate(() => __DB.bookings[0].q_status) == "hinihintay", "technician sends a quote");
   ok(!(await p.$('[data-s="Natapos"]')), "technician cannot finish while the quote is pending");
