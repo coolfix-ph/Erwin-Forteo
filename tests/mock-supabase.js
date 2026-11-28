@@ -33,6 +33,7 @@ function wadd(t,kind,amt,note){let w=DB.wallets.find(x=>x.tech_id==t);if(!w){w={
 const bk=id=>DB.bookings.find(x=>x.id==id);
 const upd=b=>{b.updated_at=now();emit('bookings','UPDATE',JSON.parse(JSON.stringify(b)))};
 const RPC={tech_reviews:a=>DB.bookings.filter(b=>b.tech_id==a.t&&b.rating).map(b=>{const p=DB.profiles.find(x=>x.id==b.customer_id)||{};const w=(p.name||'Customer').trim().split(/\s+/);return{rating:b.rating,review:b.review||'',rated_at:b.rated_at||b.updated_at,who:w[0]+(w[1]?' '+w[1][0]+'.':'')}}),
+ avatars_of:a=>DB.profiles.filter(p=>a.ids.includes(p.id)&&p.avatar).map(p=>({id:p.id,avatar:p.avatar})),
  my_profile:()=>{const p=DB.profiles.find(x=>x.id==uid);return p?{...p}:null},
  admin_profiles:()=>DB.profiles.map(x=>({...x})),
  tech_busy:a=>DB.bookings.filter(x=>x.tech_id==a.t&&x.sched_at&&ACT.includes(x.status)).map(x=>x.sched_at),
@@ -51,7 +52,7 @@ const auth={
  onAuthStateChange(cb){listeners.push(cb);return{data:{subscription:{unsubscribe(){}}}}},
  async resetPasswordForEmail(){return{error:null}},async updateUser(){return{error:null}},async signInWithOAuth(){return{error:{message:'no google'}}}};
 const FILES={};window.__FILES=FILES;
-const storage={from:b=>({async upload(path,f){FILES[b+'/'+path]=f;return{data:{path},error:null}},async createSignedUrl(path){const f=FILES[b+'/'+path];return f?{data:{signedUrl:URL.createObjectURL(f)},error:null}:{data:null,error:{message:'not found'}}}})};
+const PURL={};const storage={from:b=>({async upload(path,f){FILES[b+'/'+path]=f;return{data:{path},error:null}},getPublicUrl(path){const k=b+'/'+path,f=FILES[k];return{data:{publicUrl:f?(PURL[k]=PURL[k]||URL.createObjectURL(f)):'https://x/'+k}}},async remove(ps){ps.forEach(q=>delete FILES[b+'/'+q]);return{data:[],error:null}},async createSignedUrl(path){const f=FILES[b+'/'+path];return f?{data:{signedUrl:URL.createObjectURL(f)},error:null}:{data:null,error:{message:'not found'}}}})};
 window.__DB=DB;window.__users=users;
 window.supabase={createClient(){return{auth,storage,from:t=>new Q(t),
  functions:{async invoke(fn,o){window.__INVOKED=[fn,o&&o.body];const r=window.__FN&&window.__FN[fn];return r?r(o&&o.body):{data:null,error:{message:'no fn',context:{json:async()=>({error:'Hindi pa naka-set up ang online na bayad.'})}}}}},

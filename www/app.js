@@ -3,7 +3,7 @@ const CFG = window.COOLFIX_CONFIG || {};
 const $ = id => document.getElementById(id);
 const A = $("auth");
 // Mga column ng profile na nakikita ng ibang user. Ang phone, email at dokumento ay sa may-ari at admin lang (my_profile / admin_profiles).
-const PUB = "id,role,name,services,online,lat,lng,addr,cert_type,doc_status,google,created_at";
+const PUB = "id,role,name,services,online,lat,lng,addr,cert_type,doc_status,google,created_at,avatar,bio,years_exp,brands,gallery";
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = n => "₱" + Number(n || 0).toLocaleString("en-PH");
 // Komisyon ng CoolFix: % ng bayad sa serbisyo (hindi kasama ang booking fee). Galing sa settings (commission_pct).
@@ -124,7 +124,7 @@ const eta = t => Math.max(4, Math.round(dist(t) * 5 + 3));
 const getLoc = () => new Promise(r => { if (!navigator.geolocation) return r(null); navigator.geolocation.getCurrentPosition(p => r({ lat: p.coords.latitude, lng: p.coords.longitude }), () => r(null), { enableHighAccuracy: true, timeout: 8000 }) });
 
 // ---------- Data loading ----------
-const toTech = p => place({ id: p.id, n: p.name, s: p.services || [], online: p.online, lat: p.lat, lng: p.lng, addr: p.addr, cert: p.cert_type, ds: p.doc_status });
+const toTech = p => place({ id: p.id, n: p.name, s: p.services || [], online: p.online, lat: p.lat, lng: p.lng, addr: p.addr, cert: p.cert_type, ds: p.doc_status, av: p.avatar || null, bio: p.bio || "", yx: p.years_exp ?? null, br: p.brands || [], gl: p.gallery || [] });
 // ---------- Komunidad at social media ng technician ----------
 let GC_LINK = "https://m.me/j/6zfKIc_s_N1CLkz1/?send_source=gc:copy_invite_link_c", COMM_LINK = "";
 const SOC = {
@@ -172,6 +172,117 @@ async function reviewsInto(el, id, nm) {
   const s = STATS[id], avg = L.length ? L.reduce((n, x) => n + x.rating, 0) / L.length : 0, dist = [5, 4, 3, 2, 1].map(k => [k, L.filter(x => x.rating == k).length]);
   el.innerHTML = `<div class="rvw"><h3>${nm ? 'Mga review kay ' + esc(nm) : 'Mga review mo'}</h3>${L.length ? `<div class="rvs"><div class="rva"><b>${(s && s.rating ? Number(s.rating) : avg).toFixed(1)}</b>${starRow(Math.round(s && s.rating ? Number(s.rating) : avg))}<small>${s && s.reviews || L.length} rating</small></div><div class="rvd">${dist.map(([k, c]) => `<div><span>${k}★</span><i><em style="width:${L.length ? c / L.length * 100 : 0}%"></em></i><small>${c}</small></div>`).join('')}</div></div>
   ${L.filter(x => x.review).slice(0, 8).map(x => `<div class="rvi">${starRow(x.rating)} <b>${esc(x.who || 'Customer')}</b><small> · ${x.rated_at ? dabs(x.rated_at) : ''}</small><p>${esc(x.review)}</p></div>`).join('') || '<p class="mute" style="font-size:14px">Wala pang nakasulat na komento.</p>'}` : `<p class="mute" style="font-size:14px">${nm ? 'Wala pang review si ' + esc(nm) + '. Ikaw ang mauna pagkatapos ng trabaho.' : 'Wala ka pang review. Lalabas dito ang rating ng mga customer pagkatapos ng trabaho.'}</p>`}</div>`;
+}
+// ---------- Profile picture at public profile ng technician ----------
+// Nasa public na bucket na 'avatars' ang litrato (<user id>/<file>.jpg). Sariling folder lang ang pwedeng i-upload (015_profile_pics.sql).
+const AVB = 'avatars', AVS = {};
+const avId = id => AVS[id] || (TECHS.find(x => x.id == id) || {}).av || null;
+const purl = p => p ? sb.storage.from(AVB).getPublicUrl(p).data.publicUrl : '';
+const avH = (name, path, cls = '') => path ? `<img class="av ${cls}" src="${esc(purl(path))}" alt="" loading="lazy">` : `<div class="av ${cls}">${esc(ini(name))}</div>`;
+// Litrato ng kausap/ka-booking (technician: lahat; customer: ng technician na may booking o chat sa kanya).
+async function loadAvs() {
+  if (!USER || !sb.rpc) return;
+  const ids = [...new Set([...TX.map(b => b.customer_id), ...TX.map(b => b.tech_id), ...CONVS.map(c => c.customer_id), ...CONVS.map(c => c.tech_id)].filter(x => x && x != USER.id))];
+  if (!ids.length) return;
+  const { data } = await sb.rpc('avatars_of', { ids }); (data || []).forEach(r => { AVS[r.id] = r.avatar });
+}
+// Pinapaliit muna sa phone bago i-upload: parisukat na 512 px para sa profile pic, 1280 px para sa litrato ng trabaho.
+async function shrink(f, max, square) {
+  const u = URL.createObjectURL(f);
+  try {
+    const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Hindi mabasa ang litrato. Subukan ang JPG o PNG.')); i.src = u });
+    let w = im.naturalWidth, h = im.naturalHeight, sx = 0, sy = 0, sw = w, sh = h;
+    if (square) { const m = Math.min(w, h); sx = (w - m) / 2; sy = (h - m) / 2; sw = sh = w = h = m }
+    const k = Math.min(1, max / Math.max(w, h)), cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
+    const c = document.createElement('canvas'); c.width = cw; c.height = ch; const g = c.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, cw, ch); g.drawImage(im, sx, sy, sw, sh, 0, 0, cw, ch);
+    const b = await new Promise(r => c.toBlob(r, 'image/jpeg', .85)); if (!b) throw new Error('Hindi ma-proseso ang litrato.'); return b;
+  } finally { URL.revokeObjectURL(u) }
+}
+async function upPic(f, max, square) {
+  if (!f || (f.type && !/^image\//.test(f.type))) return { e: 'Litrato lang ang pwede (JPG o PNG).' };
+  if (f.size > 25e6) return { e: 'Masyadong malaki ang file (max 25 MB).' };
+  let b; try { b = await shrink(f, max, square) } catch (e) { return { e: e.message } }
+  const path = `${USER.id}/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.jpg`;
+  const { error } = await sb.storage.from(AVB).upload(path, b, { contentType: 'image/jpeg', cacheControl: '31536000' });
+  return error ? { e: 'Hindi na-upload: ' + error.message } : { path };
+}
+const rmPics = ps => { ps = ps.filter(Boolean); if (ps.length && sb.storage.from(AVB).remove) sb.storage.from(AVB).remove(ps).then(() => {}, () => {}) };
+async function saveProf(upd) { const { data, error } = await sb.from('profiles').update(upd).eq('id', USER.id).select(PUB).single(); if (error) return error.message; USER = { ...USER, ...data }; return '' }
+// Profile pic: litrato + Palitan/Alisin. after() = i-render ulit ang screen.
+function picBox() {
+  const u = USER;
+  return `<div class="pbox"><label class="pav" title="Palitan ang profile pic">${avH(u.name, u.avatar, 'xl')}<span class="pcam" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 7h3l2-3h6l2 3h3v13H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/></svg></span><input type="file" id="pvf" accept="image/*" hidden></label>
+  <div style="min-width:0"><h2 style="margin:0">${esc(u.name)}</h2><span class="mute">${u.role == 'customer' ? 'Customer' : 'Technician'}${u.google ? ' · Google' : ''}</span>${u.avatar ? '' : `<small class="mute" style="display:block">${u.role == 'technician' ? 'Maglagay ng malinaw na litrato ng mukha mo para mas makilala ka ng customer.' : 'Maglagay ng litrato para makilala ka ng technician pagdating niya.'}</small>`}<div class="pact"><label class="chip" for="pvf">${u.avatar ? 'Palitan' : 'Maglagay ng litrato'}</label>${u.avatar ? `<button class="chip" id="pvx" type="button">Alisin</button>` : ''}</div><p class="err" id="pve" role="alert"></p></div></div>`;
+}
+function bindPic(after) {
+  const f = $('pvf'); if (!f) return;
+  f.onchange = async () => {
+    const x = f.files[0]; if (!x) return; $('pve').textContent = ''; $('pve').insertAdjacentHTML('afterbegin', '<span class="mute">Ina-upload…</span>');
+    const r = await upPic(x, 512, true); if (r.e) { $('pve').textContent = r.e; return }
+    const old = USER.avatar, e = await saveProf({ avatar: r.path }); if (e) { rmPics([r.path]); $('pve').textContent = 'Hindi na-save: ' + e; return }
+    rmPics([old]); after();
+  };
+  if ($('pvx')) $('pvx').onclick = async () => { const old = USER.avatar, e = await saveProf({ avatar: null }); if (e) { $('pve').textContent = 'Hindi natanggal: ' + e; return } rmPics([old]); after() };
+}
+// Public profile ng technician na nakikita ng customer (t = galing sa toTech)
+const BRANDS = ['Carrier', 'Koppel', 'Panasonic', 'LG', 'Samsung', 'Daikin', 'Kolin', 'Condura', 'Aux', 'TCL', 'Midea', 'Hitachi', 'Sharp', 'Fujidenzo', 'Haier', 'Whirlpool'];
+const yrs = n => n == 0 ? 'Bago pa lang' : n + ' taon ng karanasan';
+function techAbout(t, me) {
+  const facts = [t.yx != null ? yrs(t.yx) : '', t.addr ? 'Sakop: ' + t.addr : ''].filter(Boolean);
+  const any = t.bio || facts.length || t.br.length || t.gl.length;
+  if (!any) return me ? `<p class="mute" style="font-size:14px">Wala pang nakalagay. Punan ang profile mo sa ibaba.</p>` : '';
+  return `<div class="tab2">${facts.length ? `<p class="tfacts">${facts.map(x => `<span>${esc(x)}</span>`).join('')}</p>` : ''}${t.bio ? `<p class="tbio">${esc(t.bio)}</p>` : ''}${t.br.length ? `<p class="gh">Brand na kabisado</p><div class="chips">${t.br.map(b => `<span class="chip st">${esc(b)}</span>`).join('')}</div>` : ''}${t.gl.length ? `<p class="gh">Mga natapos na trabaho</p><div class="tgal">${t.gl.map(g => `<a href="${esc(purl(g))}" target="_blank" rel="noopener"><img src="${esc(purl(g))}" alt="Litrato ng trabaho ni ${esc(first(t.n))}" loading="lazy"></a>`).join('')}</div>` : ''}</div>`;
+}
+// Gaano kakumpleto ang profile ng technician
+const profParts = u => [['Profile pic', !!u.avatar], ['Tungkol sa iyo', (u.bio || '').trim().length >= 20], ['Taon ng karanasan', u.years_exp != null], ['Brand na kabisado', (u.brands || []).length > 0], ['Litrato ng trabaho', (u.gallery || []).length > 0]];
+function profMini() {
+  const u = USER, P = profParts(u), n = P.filter(x => x[1]).length, pct = Math.round(n / P.length * 100);
+  return `<div class="jb pmini"><div class="pmt">${avH(u.name, u.avatar, 'big')}<div style="flex:1;min-width:0"><b>Profile mo para sa customer</b><div class="pbar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="Kumpleto ang profile"><i style="width:${pct}%"></i></div></div><button class="chip" id="gopf">${n == P.length ? 'Tingnan' : 'Kumpletuhin'}</button></div><small class="mute">${n == P.length ? 'Kumpleto! Ito ang nakikita ng customer kapag pumipili ng technician.' : `${pct}% kumpleto. Kulang pa: ${P.filter(x => !x[1]).map(x => x[0].toLowerCase()).join(', ')}. Mas madalas i-book ang technician na may litrato at kumpletong profile.`}</small></div>`;
+}
+let PSV = '';
+function techProfForm() {
+  const u = USER, br = new Set(u.brands || []), other = (u.brands || []).filter(b => !BRANDS.includes(b)), gl = u.gallery || [], sv = new Set(u.services || []);
+  return `<h2 style="margin-top:18px">Profile mo para sa customer</h2><p class="mute" style="margin:0 0 8px;font-size:14px">Ito ang makikita ng customer kapag pinindot ka sa listahan. Ipakilala ang sarili mo at ipakita ang mga natapos mong trabaho.</p>
+  <div class="pform"><label>Tungkol sa iyo<textarea id="pf_b" maxlength="600" rows="4" placeholder="hal. 8 taon na akong aircon technician. Dati akong nagtrabaho sa isang service center. Maingat at malinis magtrabaho, on time.">${esc(u.bio || '')}</textarea><small class="mute" id="pf_bc">${(u.bio || '').length}/600</small></label>
+  <label>Ilang taon ka nang technician?<input id="pf_y" type="number" min="0" max="60" inputmode="numeric" value="${u.years_exp ?? ''}" placeholder="hal. 5"></label>
+  <p class="gh">Serbisyong kaya mo</p><div class="chips">${SERVICES.slice(1).map(s => `<button type="button" class="chip" data-pv="${esc(s)}" aria-pressed="${sv.has(s)}">${esc(s)}</button>`).join('')}</div>
+  <p class="gh">Brand na kabisado mo</p><div class="chips">${BRANDS.map(b => `<button type="button" class="chip" data-pb="${esc(b)}" aria-pressed="${br.has(b)}">${esc(b)}</button>`).join('')}</div>
+  <label>Iba pang brand<input id="pf_o" maxlength="120" value="${esc(other.join(', '))}" placeholder="hal. Gree, Sanyo (ihiwalay sa kuwit)"></label>
+  <label>Lugar na sakop<input id="pf_a" maxlength="160" value="${esc(u.addr || '')}" placeholder="hal. Quezon City, Marikina, San Mateo"></label>
+  <p class="err" id="pfe" role="alert"></p><p class="okt" id="pfk" role="status">${esc(PSV)}</p><button class="btn" id="pfs" type="button">I-save ang profile</button>
+  <p class="gh">Litrato ng mga natapos mong trabaho (hanggang 6)</p><p class="mute" style="margin:0 0 6px;font-size:13px">Hal. bago at pagkatapos linisin, maayos na installation. Huwag isama ang mukha o address ng customer.</p>
+  <div class="tgal ed">${gl.map((g, i) => `<div class="gi"><img src="${esc(purl(g))}" alt="Litrato ng trabaho ${i + 1}" loading="lazy"><button type="button" class="gx" data-gx="${i}" aria-label="Alisin ang litrato ${i + 1}">×</button></div>`).join('')}${gl.length < 6 ? `<label class="gadd"><input type="file" id="pgf" accept="image/*" multiple hidden><span>+</span><small>Magdagdag</small></label>` : ''}</div><p class="err" id="pge" role="alert"></p></div>
+  <h3 style="margin:18px 0 4px">Ganito ka makikita ng customer</h3><div class="jb ppv"><div class="tph">${avH(u.name, u.avatar, 'big')}<div><h2 style="margin:0">${esc(u.name)}</h2>${u.cert_type == 'nc2' && u.doc_status == 'aprubado' ? CERT : ''}${stars(u.id)}<p class="mute" style="margin:0">${esc((u.services || []).join(', '))}</p></div></div>${techAbout(toTech(u), true)}</div>`;
+}
+function bindTechProf() {
+  if (!$('pfs')) return;
+  const rer = () => { const y = scrollY; profile(); scrollTo(0, y) };
+  $('pf_b').oninput = () => { $('pf_bc').textContent = $('pf_b').value.length + '/600' };
+  A.querySelectorAll('[data-pv],[data-pb]').forEach(b => b.onclick = () => b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') != 'true'));
+  $('pfs').onclick = async () => {
+    const bio = $('pf_b').value.trim(), yv = $('pf_y').value.trim(), y = yv === '' ? null : Math.round(Number(yv));
+    const services = [...A.querySelectorAll('[data-pv][aria-pressed=true]')].map(b => b.dataset.pv);
+    const brands = [...new Set([...A.querySelectorAll('[data-pb][aria-pressed=true]')].map(b => b.dataset.pb).concat($('pf_o').value.split(',').map(x => x.trim().slice(0, 30)).filter(Boolean)))].slice(0, 15);
+    if (y != null && !(y >= 0 && y <= 60)) { $('pfe').textContent = 'Ilagay ang taon ng karanasan (0 hanggang 60).'; return }
+    if (!services.length) { $('pfe').textContent = 'Pumili ng kahit isang serbisyo.'; return }
+    busy('pfs', true); const e = await saveProf({ bio, years_exp: y, services, brands, addr: $('pf_a').value.trim() }); busy('pfs', false);
+    if (e) { $('pfe').textContent = 'Hindi na-save: ' + e; return }
+    PSV = 'Na-save! Makikita na ito ng mga customer.'; rer(); setTimeout(() => { PSV = '' }, 0);
+  };
+  const gf = $('pgf');
+  if (gf) gf.onchange = async () => {
+    const fs = [...gf.files].slice(0, 6 - (USER.gallery || []).length); if (!fs.length) return;
+    $('pge').innerHTML = '<span class="mute">Ina-upload…</span>'; const add = [];
+    for (const f of fs) { const r = await upPic(f, 1280, false); if (r.e) { $('pge').textContent = r.e; break } add.push(r.path) }
+    if (!add.length) return;
+    const e = await saveProf({ gallery: [...(USER.gallery || []), ...add].slice(0, 6) }); if (e) { rmPics(add); $('pge').textContent = 'Hindi na-save: ' + e; return }
+    rer();
+  };
+  A.querySelectorAll('[data-gx]').forEach(b => b.onclick = async () => {
+    const g = [...(USER.gallery || [])], [old] = g.splice(+b.dataset.gx, 1); b.disabled = true;
+    const e = await saveProf({ gallery: g }); if (e) { b.disabled = false; $('pge').textContent = 'Hindi natanggal: ' + e; return } rmPics([old]); rer();
+  });
 }
 // ---------- Customer service report ----------
 let REPS = [], RF = { cat: '', b: '', t: '' }, RFILE = null;
@@ -282,7 +393,7 @@ async function saveSetting(key, value) {
   return error;
 }
 async function loadTechs() {
-  const { data } = await sb.from("profiles").select("id,name,services,online,lat,lng,addr,cert_type,doc_status").eq("role", "technician");
+  const { data } = await sb.from("profiles").select("id,name,services,online,lat,lng,addr,cert_type,doc_status,avatar,bio,years_exp,brands,gallery").eq("role", "technician");
   const all = data || [];
   TECHS = all.filter(p => p.online && p.id != USER?.id).map(toTech);
   return all;
@@ -466,6 +577,7 @@ async function start(session) {
       if (st && st.ct && st.files) { const e = await uploadDocs(st.ct, st.files); if (e) console.error(e); else dropDocs(p.email) }
     }
     await Promise.all([loadSettings(), loadTX(), loadConvs()]);
+    await loadAvs().catch(() => {});
     await enter();
   } catch (e) {
     console.error(e); USER = null; err = "May error habang naglo-load: " + (e.message || e); authView();
@@ -618,8 +730,8 @@ function home() {
   if (GL) gClear(); $("route").innerHTML = ""; sel = null;
   pins();
   const L = list(), act = myBookings().filter(x => ACTIVE.includes(x.st)), unr = myBookings().find(x => x.st == 'Natapos' && !x.rating && Date.now() - tms(x.done_at || x.updated_at) < 7 * 864e5), inCart = (c, x) => CART.find(y => y.c == c.k && y.n == x[0]);
-  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}"><div class="av">${esc(ini(t.n))}</div><div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}${stars(t.id)}<small>${esc(t.s.join(', '))}</small></div><div class="km">${kmTxt(t)}<span class="bkp">I-book</span></div></button>`).join("") || `<p class="mute">Wala pang online na technician na kaya ${CART.length > 1 ? 'lahat ng nasa cart mo' : 'ang serbisyong ito'}. ${CART.length > 1 ? 'Subukang hatiin sa dalawang booking, o ' : ''}subukan ulit mamaya.</p>`;
-  const hd = `<div class='hello'><b>Kumusta, ${esc(first(USER.name))}!</b><span>${TECHS.filter(t => t.online).length} technician ang online ngayon</span></div><div class='stats' id='hstats'>${statsHtml()}</div>${act.length ? `<p class="note">May aktibo kang booking. <button class="chip" id="ab">Tingnan</button></p>` : unr ? `<p class="note">Paano ang serbisyo ni ${esc(first(unr.tech_name))}? <button class="chip" id="rtb">I-rate</button></p>` : ""}`;
+  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}">${avH(t.n, t.av)}<div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}${stars(t.id)}<small>${t.yx ? esc(yrs(t.yx)) + ' · ' : ''}${esc(t.s.join(', '))}</small></div><div class="km">${kmTxt(t)}<span class="bkp">I-book</span></div></button>`).join("") || `<p class="mute">Wala pang online na technician na kaya ${CART.length > 1 ? 'lahat ng nasa cart mo' : 'ang serbisyong ito'}. ${CART.length > 1 ? 'Subukang hatiin sa dalawang booking, o ' : ''}subukan ulit mamaya.</p>`;
+  const hd = `<div class='hrow'><button class='hav' id='hav' type='button' aria-label='${USER.avatar ? 'Account mo' : 'Maglagay ng profile pic'}'>${avH(USER.name, USER.avatar, 'big')}${USER.avatar ? '' : '<i aria-hidden="true">+</i>'}</button><div class='hello'><b>Kumusta, ${esc(first(USER.name))}!</b><span>${TECHS.filter(t => t.online).length} technician ang online ngayon</span></div></div><div class='stats' id='hstats'>${statsHtml()}</div>${act.length ? `<p class="note">May aktibo kang booking. <button class="chip" id="ab">Tingnan</button></p>` : unr ? `<p class="note">Paano ang serbisyo ni ${esc(first(unr.tech_name))}? <button class="chip" id="rtb">I-rate</button></p>` : ""}`;
   let body;
   if (!cat) body = `<h2>${CART.length ? 'Magdagdag pa ng serbisyo' : 'Anong serbisyo ang kailangan mo?'}</h2><div class="cats">${CAT.map((c, i) => `<button class="cat" data-c="${i}"><b>${esc(c.t)}</b><small>${esc(c.d)}</small></button>`).join("")}</div><p class="mute" style="font-size:13px">Pwedeng magdagdag ng ilang serbisyo sa iisang booking. Tingnan ang <b>Rate guide</b> para sa lahat ng presyo.</p>`;
   else body = `<button class="chip" id="cb">‹ Lahat ng serbisyo</button><h2 style="margin:10px 0 2px">${esc(cat.t)}</h2><p class="mute" style="margin:0 0 4px;font-size:13px">${esc(cat.n)} I-tap para idagdag sa cart.</p>
@@ -633,6 +745,7 @@ function home() {
   if ($("bkgo")) $("bkgo").onclick = goT;
   if ($("gocart")) $("gocart").onclick = () => L.length ? goT() : $("cart").scrollIntoView({ behavior: "smooth", block: "start" });
   if ($("ab")) $("ab").onclick = () => { TRACK = act[0]; trackView() };
+  $("hav").onclick = () => { TAB = 'me'; show() };
   if ($("rtb")) $("rtb").onclick = () => { TRACK = unr; trackView() };
   document.querySelectorAll(".cat").forEach(b => b.onclick = () => { cat = CAT[b.dataset.c]; home() });
   if (cat) {
@@ -677,7 +790,7 @@ function pick(t) {
   if (!CART.length) { sel = t; pins(); $("panel").insertAdjacentHTML("afterbegin", `<p class="note">Magdagdag muna ng serbisyo sa cart bago mag-book kay ${esc(first(t.n))}.</p>`); return }
   VIEW = "pick"; sel = t; pins();
   const au = OC.filter(o => o.a), opt = OC.map((o, i) => o.a ? '' : `<label class="ck"><input type="checkbox" data-oc="${i}"> ${esc(o.n)} <small>${ocs(o)}</small></label>`).join("");
-  $("panel").innerHTML = `<h2>${esc(t.n)}</h2>${certified(t) ? CERT : ''}${stars(t.id)}<p class="mute" style="margin:0">${esc(t.s.join(', '))} · ${hasLoc(t) ? dist(t).toFixed(1) + ' km ang layo' : 'hindi pa alam ang eksaktong lokasyon'}</p>
+  $("panel").innerHTML = `<div class="tph">${avH(t.n, t.av, 'big')}<div><h2 style="margin:0">${esc(t.n)}</h2>${certified(t) ? CERT : ''}${stars(t.id)}<p class="mute" style="margin:0">${esc(t.s.join(', '))} · ${hasLoc(t) ? dist(t).toFixed(1) + ' km ang layo' : 'hindi pa alam ang eksaktong lokasyon'}</p></div></div>${techAbout(t)}
  ${cartBox(false)}
  ${opt ? `<p class="gh">Dagdag na singil (kung kailangan)</p>${opt}` : ''}
  <label class="mute" style="display:block;margin-top:10px">Address<input id="ad" value="${esc(USER.addr || '')}" placeholder="Bahay/Unit, Kalye, Brgy., Lungsod"></label>${LF || GM ? `<button class="chip adb" id="adm" type="button"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 22c-5-6.5-8-10.5-8-14a8 8 0 0 1 16 0c0 3.5-3 7.5-8 14z" fill="currentColor"/><circle cx="12" cy="8" r="3" fill="var(--panel)"/></svg>Piliin sa mapa ang eksaktong lugar</button>` : ''}
@@ -879,7 +992,7 @@ function techDash() {
     : `<div class="jb doc ${ds}"><b>${noId && ds != "kulang" ? "Kailangan na rin ng Valid ID" : ds == "aprubado" ? "Palitan ang dokumento" : ds == "sinusuri" ? "Sinusuri na ng admin ang dokumento mo" : ds == "tinanggihan" ? "Hindi naaprubahan ang dokumento mo" : "Kailangan ng dokumento bago makatanggap ng booking"}</b>
     <p class="mute" style="margin:4px 0">${noId && ds != "kulang" ? `Bagong requirement ang valid ID para sa lahat ng technician. I-upload ito sa ibaba.${ds == "aprubado" ? " Susuriin ulit ito ng admin, kaya hindi ka muna makakapag-online hangga't hindi naaaprubahan." : ""}` : ds == "sinusuri" && !RE ? `${ctName(u.cert_type)} · ${REQ ? "Makakapag-online ka kapag naaprubahan na ng admin." : "Pwede ka nang mag-online habang sinusuri."}` : ds == "tinanggihan" ? `Dahilan: ${esc(u.doc_note || "—")}. Mag-upload ulit ng malinaw na kopya.` : ds == "aprubado" ? "Kapag nagpalit ka, susuriin ulit ito ng admin at hindi ka muna makakapag-online." : "I-upload ang valid ID at NC II certificate mo. Kung walang NC II, ang DTI Business Permit at BIR COR (Form 2303)."}</p>
     ${form ? `<div id="dz"></div><p class="err" id="dze" role="alert"></p><button class="btn" id="dsub">I-submit ang dokumento</button>${RE ? `<button class="btn alt" id="dcx">Huwag na</button>` : ""}` : `<button class="chip" id="reup">Palitan ang dokumento</button>`}</div>`;
-  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p><button type="button" class="olbar${u.online ? " on" : ""}" id="ol" role="switch" aria-checked="${!!u.online}" ${lock ? "disabled" : ""}><span class="old"></span><span class="nt"><b>${u.online ? "Online ka" : "Offline ka"}</b><small>${u.online ? "Nakikita ka ng mga customer at pwede kang ma-book. I-tap para mag-offline." : lock ? (!dlock ? `Kulang ang wallet mo (minimum ${fmt(WMIN)}). Mag-top up muna para makapag-online.` : ds == "sinusuri" ? "Hinihintay ang pag-apruba ng admin sa dokumento mo." : "I-upload muna ang dokumento sa ibaba para makapag-online.") : "Hindi ka nakikita ng mga customer. I-tap para mag-online."}</small></span><span class="sw" aria-hidden="true"><i></i></span></button>${docBox}${walletMini()}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><p class="err" id="de" role="alert"></p>${techCal(J)}<h3 style="margin:16px 0 4px">Mga aktibong booking</h3><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<div id="myrv"></div>${commBox(u)}<p class="err" id="pe" role="alert"></p></div>`;
+  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p><button type="button" class="olbar${u.online ? " on" : ""}" id="ol" role="switch" aria-checked="${!!u.online}" ${lock ? "disabled" : ""}><span class="old"></span><span class="nt"><b>${u.online ? "Online ka" : "Offline ka"}</b><small>${u.online ? "Nakikita ka ng mga customer at pwede kang ma-book. I-tap para mag-offline." : lock ? (!dlock ? `Kulang ang wallet mo (minimum ${fmt(WMIN)}). Mag-top up muna para makapag-online.` : ds == "sinusuri" ? "Hinihintay ang pag-apruba ng admin sa dokumento mo." : "I-upload muna ang dokumento sa ibaba para makapag-online.") : "Hindi ka nakikita ng mga customer. I-tap para mag-online."}</small></span><span class="sw" aria-hidden="true"><i></i></span></button>${docBox}${profMini()}${walletMini()}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><p class="err" id="de" role="alert"></p>${techCal(J)}<h3 style="margin:16px 0 4px">Mga aktibong booking</h3><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<div id="myrv"></div>${commBox(u)}<p class="err" id="pe" role="alert"></p></div>`;
   if ($("dz")) { if (!CT) CT = u.cert_type || null; mountDocs($("dz")) }
   if ($("reup")) $("reup").onclick = () => { RE = true; techDash() };
   if ($("dcx")) $("dcx").onclick = () => { RE = false; FILES = {}; techDash() };
@@ -908,7 +1021,7 @@ function techDash() {
     const { data } = await sb.from("bookings").select("*").eq("id", id).single(); if (data) upsertTx(data); techDash();
   });
   A.querySelectorAll("[data-s]").forEach(b => b.onclick = async () => { b.disabled = true; const r = await setStatus(+b.dataset.b, b.dataset.s); if (r) { $("de").textContent = r; b.disabled = false } else if (b.dataset.s == 'Papunta na') { const j = TX.find(x => x.id == +b.dataset.b); if (j) techMap(j) } });
-  miniMaps(); bindComm(); reviewsInto($("myrv"), u.id, null);
+  miniMaps(); bindComm(); reviewsInto($("myrv"), u.id, null); if ($("gopf")) $("gopf").onclick = () => { TAB = 'me'; show(); const h = A.querySelector('.pform'); if (h) h.scrollIntoView({ block: 'start' }) };
   A.querySelectorAll("[data-map]").forEach(b => b.onclick = () => { const j = TX.find(x => x.id == +b.dataset.map); if (j) techMap(j) });
   A.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { const j = TX.find(x => x.id == b.dataset.c); openChatWithCustomer(j) });
   A.querySelectorAll("#tcal [data-day]").forEach(b => b.onclick = () => { TD = b.dataset.day; techDash(); const c = $("tcal"); if (c) c.scrollIntoView({ block: "nearest" }) });
@@ -995,7 +1108,7 @@ function stopWatch() { if (watchId != null) navigator.geolocation.clearWatch(wat
 function mine() { return CONVS.filter(c => c.m.length).sort((a, b) => (b.m.at(-1)?.ts || 0) - (a.m.at(-1)?.ts || 0)) }
 function inbox() {
   VIEW = "inbox"; const r = rk(), L = mine();
-  A.innerHTML = `<div class='panel au'><h2>Mensahe</h2>${L.length ? L.map(c => { const n = r == 'c' ? c.tech_name : c.cust_name, l = c.m.at(-1), u = unreadOf(c); return `<button class='t' data-k='${esc(c.id)}'><div class='av'>${esc(ini(n))}</div><div><b>${esc(n)}</b><small>${esc(l.t.slice(0, 44))}</small></div><div class='km'>${tm(l.ts)}${u ? `<small><span class='badge'>${u}</span></small>` : ''}</div></button>` }).join('') : `<p class='mute'>Wala ka pang mensahe. ${r == 'c' ? 'Pumili ng technician sa Hanapin at i-tap ang Mag-message.' : 'Lalabas dito ang mga mensahe ng customer.'}</p>`}</div>`;
+  A.innerHTML = `<div class='panel au'><h2>Mensahe</h2>${L.length ? L.map(c => { const n = r == 'c' ? c.tech_name : c.cust_name, l = c.m.at(-1), u = unreadOf(c); return `<button class='t' data-k='${esc(c.id)}'>${avH(n, avId(r == 'c' ? c.tech_id : c.customer_id))}<div><b>${esc(n)}</b><small>${esc(l.t.slice(0, 44))}</small></div><div class='km'>${tm(l.ts)}${u ? `<small><span class='badge'>${u}</span></small>` : ''}</div></button>` }).join('') : `<p class='mute'>Wala ka pang mensahe. ${r == 'c' ? 'Pumili ng technician sa Hanapin at i-tap ang Mag-message.' : 'Lalabas dito ang mga mensahe ng customer.'}</p>`}</div>`;
   A.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { CUR = b.dataset.k; show() });
 }
 async function openChat(t) {
@@ -1045,7 +1158,7 @@ function chatView(f) {
   VIEW = "chat"; markRead(c);
   const keep = $('mi') ? $('mi').value : '';
   const n = r == 'c' ? c.tech_name : c.cust_name, qr = r == 't' ? ['Papunta na po ako.', 'Ilang unit po ang aircon?', 'Pwede po ba bukas ng umaga?'] : ['Magkano po ang cleaning?', 'Pwede po ba ngayon?', 'Salamat po!'];
-  A.innerHTML = `<div class='panel au chat'><div class='ch-h'><button class='chip' id='cb'>‹ Bumalik</button><div class='av'>${esc(ini(n))}</div><b>${esc(n)}</b></div><div class='msgs' id='ms'>${c.m.map(m => `<div class='b ${m.f == r ? 'me' : 'them'}${m.file ? ' fb' : ''}'>${m.file ? fileBubble(m) : esc(m.t)}<small>${tm(m.ts)}</small></div>`).join('') || '<p class="mute">Simulan ang usapan. Mag-hi!</p>'}</div><div class='chips' style='margin:8px 0'>${qr.map(q => `<button class='chip' data-q='${esc(q)}'>${esc(q)}</button>`).join('')}</div><div class='send'><label class='att' title='Mag-attach ng larawan o file' aria-label='Mag-attach ng larawan o file'><input type='file' id='mf' accept='image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,video/mp4,video/quicktime' hidden><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label><input id='mi' placeholder='Mag-type ng mensahe' maxlength='500' autocomplete='off'><button class='btn' id='sn' style='width:auto;margin:0;padding:10px 16px'>Ipadala</button></div><p class="err" id="ce" role="alert"></p></div>`;
+  A.innerHTML = `<div class='panel au chat'><div class='ch-h'><button class='chip' id='cb'>‹ Bumalik</button>${avH(n, avId(r == 'c' ? c.tech_id : c.customer_id))}<b>${esc(n)}</b></div><div class='msgs' id='ms'>${c.m.map(m => `<div class='b ${m.f == r ? 'me' : 'them'}${m.file ? ' fb' : ''}'>${m.file ? fileBubble(m) : esc(m.t)}<small>${tm(m.ts)}</small></div>`).join('') || '<p class="mute">Simulan ang usapan. Mag-hi!</p>'}</div><div class='chips' style='margin:8px 0'>${qr.map(q => `<button class='chip' data-q='${esc(q)}'>${esc(q)}</button>`).join('')}</div><div class='send'><label class='att' title='Mag-attach ng larawan o file' aria-label='Mag-attach ng larawan o file'><input type='file' id='mf' accept='image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,video/mp4,video/quicktime' hidden><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label><input id='mi' placeholder='Mag-type ng mensahe' maxlength='500' autocomplete='off'><button class='btn' id='sn' style='width:auto;margin:0;padding:10px 16px'>Ipadala</button></div><p class="err" id="ce" role="alert"></p></div>`;
   const ms = $('ms'); ms.scrollTop = ms.scrollHeight;
   $('mi').value = keep;
   const go = async t => {
@@ -1080,9 +1193,9 @@ function chatView(f) {
 function profile() {
   VIEW = "me"; const u = USER, c = u.role == 'customer', row = (a, b) => `<div class='row'><span class='mute'>${a}</span><span>${esc(b)}</span></div>`;
   const B = c ? myBookings() : myJobs();
-  A.innerHTML = `<div class='panel au'><div class='who'><div class='av big'>${esc(ini(u.name))}</div><div><h2 style='margin:0'>${esc(u.name)}</h2><span class='mute'>${c ? 'Customer' : 'Technician'}${u.google ? ' · Google' : ''}</span></div></div>${row('Email', u.email || '')}${u.phone ? row('Cellphone', u.phone) : ''}${u.addr ? row(c ? 'Address' : 'Lugar na sakop', u.addr) : ''}${c ? '' : row('Serbisyo', (u.services || []).join(', '))}
+  A.innerHTML = `<div class='panel au'>${picBox()}${row('Email', u.email || '')}${u.phone ? row('Cellphone', u.phone) : ''}${c && u.addr ? row('Address', u.addr) : ''}${c ? '' : techProfForm()}
  <h2 style='margin-top:16px'>${c ? 'Mga booking' : 'Mga trabaho'}</h2>${B.length ? B.slice(0, 10).map(b => `<div class='row'><span>${esc(b.svc)}<br><small class='mute'>${esc(c ? b.tech_name : b.cust_name)} · ${esc(b.code || '')}</small></span><span style="text-align:right"><span class='pill ${b.st == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(b.st) ? 'no' : ''}'>${esc(b.st)}</span><br><small class='mute'>${dstr(b.ts)}</small>${c && (ACTIVE.includes(b.st) || b.st == 'Natapos') ? `<br><button class="chip" data-tr="${b.id}">${b.st == 'Natapos' ? (b.rating ? 'Tingnan' : 'I-rate') : 'I-track'}</button>` : ''}</span></div>`).join('') : '<p class="mute">Wala pa.</p>'}<button class='btn alt' id='pl'>Mag-log out</button></div>`;
-  $('pl').onclick = () => $('lo').click();
+  $('pl').onclick = () => $('lo').click(); bindPic(() => { const y = scrollY; profile(); scrollTo(0, y) }); bindTechProf();
   A.querySelectorAll('[data-tr]').forEach(b => b.onclick = () => { TRACK = TX.find(x => x.id == b.dataset.tr); TAB = 'find'; show() });
 }
 
