@@ -8,7 +8,7 @@ const srv = http.createServer((q, r) => { const f = path.join(WWW, decodeURIComp
 const ok = (c, m) => { if (!c) throw new Error("FAIL: " + m); console.log("ok -", m) };
 (async () => {
   await new Promise(r => srv.listen(0, r)); const url = `http://localhost:${srv.address().port}/`;
-  const b = await chromium.launch(); const ctx = await b.newContext({ geolocation: { latitude: 14.68, longitude: 121.05 }, permissions: ["geolocation"] }); const p = await ctx.newPage();
+  const b = await chromium.launch(); const ctx = await b.newContext({ serviceWorkers: "block", geolocation: { latitude: 14.68, longitude: 121.05 }, permissions: ["geolocation"] }); const p = await ctx.newPage();
   const errs = []; p.on("pageerror", e => errs.push(e.message));
   await p.route("**/vendor/supabase.js", r => r.fulfill({ contentType: "application/javascript", body: fs.readFileSync(path.join(__dirname, "mock-supabase.js"), "utf8") }));
   await p.route("**/config.js", r => r.fulfill({ contentType: "application/javascript", body: 'window.COOLFIX_CONFIG={supabaseUrl:"x",supabaseAnonKey:"y"}' }));

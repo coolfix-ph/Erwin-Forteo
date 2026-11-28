@@ -40,6 +40,13 @@ npm install
 npm run serve
 ```
 
+## Installable app (PWA)
+
+Puwedeng i-install ang website bilang app nang libre, nang hindi dumadaan sa Play Store o App Store:
+- `www/manifest.webmanifest` at `www/img/icons/`: pangalan, kulay at icon ng app.
+- `www/sw.js`: service worker. Hindi nito kina-cache ang Supabase, PayMongo o Google Maps. Laging kinukuha sa internet ang `index.html`, kaya lumalabas agad ang bagong `app.js` kapag pinalitan ang `?v=`. Palitan ang `CACHE` sa `sw.js` kung kailangang burahin ang lahat ng naka-cache.
+- `www/pwa.js`: "I-install ang app" na banner. Sa Android, lumalabas ang install prompt ng Chrome. Sa iPhone, may instructions para sa Share → Add to Home Screen. Sa Facebook/Messenger browser, sinasabing buksan muna sa Chrome o Safari.
+
 ## 3. Mobile apps (Capacitor)
 
 ```bash

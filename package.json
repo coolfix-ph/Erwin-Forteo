@@ -6,7 +6,7 @@
     "vendor": "mkdir -p www/vendor && cp node_modules/@supabase/supabase-js/dist/umd/supabase.js www/vendor/",
     "sync": "npm run vendor && npx cap sync",
     "serve": "npx --yes http-server www -p 8080 -c-1",
-    "test": "node tests/e2e.js",
+    "test": "node tests/e2e.js && node tests/pwa.js",
     "android": "npm run sync && npx cap open android",
     "ios": "npm run sync && npx cap open ios"
   },
