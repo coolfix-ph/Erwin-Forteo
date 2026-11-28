@@ -1,5 +1,5 @@
 (function(){
-const DB={profiles:[],bookings:[],conversations:[],messages:[],settings:[],wallets:[],wallet_tx:[],topups:[],reports:[]};let seq=1,uid=null;const subs=[];
+const DB={profiles:[],bookings:[],conversations:[],messages:[],settings:[],wallets:[],wallet_tx:[],topups:[],reports:[],app_installs:[]};let seq=1,uid=null;const subs=[];
 const users=[];const listeners=[];
 const now=()=>new Date().toISOString();
 function emit(table,ev,row){subs.forEach(s=>{if(s.table==table&&(s.event=='*'||s.event==ev))setTimeout(()=>s.cb({new:JSON.parse(JSON.stringify(row))}),5)})}

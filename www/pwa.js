@@ -10,9 +10,25 @@
 
   const ua = N.userAgent || "";
   const standalone = W.matchMedia("(display-mode: standalone)").matches || N.standalone === true;
-  if (standalone) return; // naka-install na
   const ios = /iphone|ipad|ipod/i.test(ua) || (N.platform === "MacIntel" && N.maxTouchPoints > 1);
   const android = /android/i.test(ua);
+  // Bilang ng install para sa admin (016_app_installs.sql). Isang beses lang kada device at paraan.
+  // Sa iPhone, walang install event, kaya nabibilang lang ito kapag binuksan na mula sa home screen.
+  function logInstall(via) {
+    try {
+      const done = "cf_inst_" + via; if (localStorage.getItem(done)) return;
+      let dev = localStorage.getItem("cf_dev");
+      if (!dev) { dev = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12)); localStorage.setItem("cf_dev", dev) }
+      const C = W.COOLFIX_CONFIG || {}; if (!C.supabaseUrl || !C.supabaseAnonKey) return;
+      fetch(C.supabaseUrl.replace(/\/$/, "") + "/rest/v1/rpc/log_install", {
+        method: "POST", keepalive: true,
+        headers: { "content-type": "application/json", apikey: C.supabaseAnonKey },
+        body: JSON.stringify({ p_device: dev, p_platform: ios ? "iphone" : android ? "android" : "desktop", p_via: via })
+      }).then(r => { if (r.ok) localStorage.setItem(done, Date.now()) }).catch(() => { });
+    } catch (e) { }
+  }
+  W.addEventListener("appinstalled", () => logInstall("install"));
+  if (standalone) { logInstall("open"); return } // naka-install na
   const mac = /Macintosh/.test(ua) && !ios;
   const inapp = /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|TikTok|; wv\)/i.test(ua);
   const KEY = "cf_pwa_x", DAYS = 7;

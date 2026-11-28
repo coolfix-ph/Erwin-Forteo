@@ -412,6 +412,8 @@ async function loadConvs() {
   CONVS = (cs || []).map(c => ({ ...c, m: ms.filter(m => m.conv_id == c.id).map(m => ({ id: m.id, f: m.sender, t: m.body, file: m.file || null, ts: new Date(m.created_at).getTime() })) }));
 }
 async function loadProfiles() { const { data } = await sb.rpc("admin_profiles"); PROFILES = data || [] }
+let INST = [];
+async function loadInstalls() { const { data } = await sb.from("app_installs").select("device,platform,via,created_at").order("created_at", { ascending: true }).limit(10000); INST = data || [] }
 
 // Bantay kung sakaling hindi dumating ang realtime: i-reload ang mga online na technician kada 30 segundo at pagbalik sa app.
 let pollT = null;
@@ -593,7 +595,7 @@ async function enter() {
   if (u.role == "customer") {
     await Promise.all([loadTechs(), loadStats(), loadReports()]); show(); initGM();
     getLoc().then(p => { if (p) { C = p; CK = true; TECHS.forEach(place); if (VIEW == "home") home(); if (GL) mapMe() } });
-  } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs(), loadTopups(), loadReports()]); show() }
+  } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs(), loadTopups(), loadReports(), loadInstalls()]); show() }
   else { await loadWallet(); syncWatch(); if (PMRET) TAB = 'wl'; show(); if (PMRET) { const r = PMRET; PMRET = ''; A.firstElementChild.insertAdjacentHTML('afterbegin', r == 'ok' ? `<p class="note">Salamat! Papasok ang credits sa wallet mo sa loob ng ilang segundo, kapag nakumpirma na ng PayMongo ang bayad.</p>` : `<p class="note">Hindi natuloy ang bayad. Walang nabawas sa iyo. Pwede mong subukan ulit.</p>`) } }
 }
 $("lo").onclick = async () => { stopWatch(); if (channel) sb.removeChannel(channel); channel = null; await sb.auth.signOut(); USER = null; TRACK = null; document.body.classList.remove("adm"); document.documentElement.style.background = ""; mode = "login"; role = "customer"; cat = null; CART = []; CT = null; FILES = {}; RE = false; authView() };
@@ -1245,6 +1247,13 @@ function admOv() {
   const pill = s => `<span class='pill ${s == 'Natapos' ? 'ok' : ['Kinansela', 'Tinanggihan'].includes(s) ? 'no' : ''}'>${esc(s)}</span>`;
   const kpi = (l, v, sub) => `<div class='kpi'><small>${l}</small><b>${v}</b><span>${sub}</span></div>`;
   const pend = techs.filter(u => u.doc_status == 'sinusuri').length;
+  const inP = (t, a, b) => t >= a && t < b, NOW = Date.now() + DAY;
+  const nCur = a => a.filter(u => inP(tms(u.created_at), st, NOW)).length, nPrev = a => a.filter(u => inP(tms(u.created_at), pst, st)).length;
+  const accs = [...custs, ...techs], na = nCur(accs), nap = nPrev(accs), pl = AP == 1 ? 'ngayong araw' : `sa huling ${AP} araw`;
+  const dev = {}; INST.forEach(x => { const t = tms(x.created_at); if (!dev[x.device] || t < dev[x.device].t) dev[x.device] = { t, p: x.platform } });
+  const DV = Object.values(dev), ni = DV.filter(x => inP(x.t, st, NOW)).length, nip = DV.filter(x => inP(x.t, pst, st)).length;
+  const PF = [['android', 'Android'], ['iphone', 'iPhone'], ['desktop', 'Computer'], ['iba', 'Iba pa']].map(([k, l]) => [l, DV.filter(x => x.p == k).length]).filter((x, i) => i < 3 || x[1]), pmx = Math.max(1, ...PF.map(x => x[1]));
+  const since = INST.length ? new Date(tms(INST[0].created_at)).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
   A.innerHTML = `<div class='dash'>${pend ? `<p class='note'><b>${pend}</b> technician ang naghihintay ng pag-apruba ng dokumento. <button class='chip' id='gotc'>Suriin</button></p>` : ''}
   <div class='dh'><div><h2>Overview</h2><p class='mute'>${t0.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p></div>
    <div class='chips' role='group' aria-label='Period'>${[[1, 'Ngayon'], [7, '7 araw'], [30, '30 araw']].map(([n, l]) => `<button class='chip' aria-pressed='${AP == n}' data-ap='${n}'>${l}</button>`).join('')}</div></div>
@@ -1258,6 +1267,17 @@ function admOv() {
    <section class='card'><div class='ch'><h3>Status ng booking</h3><span class='mute'>${cur.length} booking</span></div>
     ${sc.map(([s, n]) => `<div class='hb'><span>${s}</span><div><i style='width:${n / smx * 100}%'></i></div><b>${n}</b></div>`).join('')}
     <div class='mini'><div><b>${techs.filter(u => u.online).length}<small> / ${techs.length}</small></b><span>Technician na online</span></div><div><b>${custs.length}</b><span>Customer</span></div></div>
+   </section>
+  </div>
+  <div class='grid2'>
+   <section class='card' id='ovacc'><div class='ch'><h3>Mga nag-create ng account</h3><span class='mute'>${accs.length} lahat</span></div>
+    <div class='hero sm'><b>${na}</b><span class='mute'>bagong account ${pl}</span><small class='mute'>${dl(na, nap)}</small></div>
+    <div class='mini'><div><b>${custs.length}<small> +${nCur(custs)}</small></b><span>Customer</span></div><div><b>${techs.length}<small> +${nCur(techs)}</small></b><span>Technician</span></div></div>
+   </section>
+   <section class='card' id='ovapp'><div class='ch'><h3>Nag-download ng app</h3><span class='mute'>${DV.length} device lahat</span></div>
+    <div class='hero sm'><b>${ni}</b><span class='mute'>bagong install ${pl}</span><small class='mute'>${dl(ni, nip)}</small></div>
+    ${PF.map(([l, n]) => `<div class='hb'><span>${l}</span><div><i style='width:${n / pmx * 100}%'></i></div><b>${n}</b></div>`).join('')}
+    <p class='mute' style='font-size:12px;margin:8px 0 0'>${since ? `Binibilang mula ${since}. ` : 'Wala pang nabibilang na install. '}Sa iPhone, nabibilang lang kapag binuksan na ang app mula sa home screen.</p>
    </section>
   </div>
   <div class='grid2'>
