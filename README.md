@@ -77,3 +77,12 @@ Sinusubok nito ang buong daloy (sign-up, booking, live status, chat at admin) ga
 - Hindi na nakikita ng technician ang cellphone ng customer, at tinatakpan ang mga cellphone number sa chat. In-app chat ang gamit.
 - Nag-a-update ang lokasyon ng technician kada 15 segundo habang naka-online at bukas ang app.
 - Nakikita ng sinumang naka-log in ang pangalan, serbisyo at lokasyon ng mga technician. Nakikita lang ng technician ang pangalan, cellphone at address ng customer na may booking o chat sa kanya.
+
+## Notification, paalala, warranty, referral at paulit-ulit na cleaning (017)
+- `supabase/017_engagement.sql`: patakbuhin sa SQL Editor. Kailangan ng `pg_net` at `pg_cron` (kusang ina-on ng file).
+- **Push notification**: Web Push sa `www/sw.js`. Ang edge function na `supabase/functions/push-send` ang nagpapadala (i-deploy nang naka-off ang "Verify JWT"). Ilagay ang VAPID keys sa `pm_config` (`vapid_public`, `vapid_private`, `vapid_subject`), ang `push_url` ng function, at ang public key sa settings na `push_public`. Huwag i-commit ang private key. Sa iPhone, gumagana lang ito kapag naka-install na sa Home Screen (iOS 16.4 pataas).
+- **Paalala**: bawat 5 minuto (`cf_tick`), may abiso 1 araw at 1 oras bago ang schedule.
+- **Warranty**: "Humingi ng libreng balik" sa natapos na booking habang may warranty. Libre, walang commission, sa parehong technician. May PDF na resibo.
+- **Referral at promo**: ₱50 sa bagong customer at ₱50 sa nag-imbita (palitan sa admin tab na **Promo**). Doon din gumagawa ng promo code. Sagot ng CoolFix ang discount: ibinabalik ito sa wallet ng technician pagka-Natapos.
+- **Paulit-ulit na cleaning**: tuwing 3 o 6 na buwan; kusang nagbu-book 3 araw bago ang petsa.
+- Test: `node tests/engage.js`
