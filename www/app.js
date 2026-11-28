@@ -230,9 +230,110 @@ const BRANDS = ['Carrier', 'Koppel', 'Panasonic', 'LG', 'Samsung', 'Daikin', 'Ko
 const yrs = n => n == 0 ? 'Bago pa lang' : n + ' taon ng karanasan';
 function techAbout(t, me) {
   const facts = [t.yx != null ? yrs(t.yx) : '', t.addr ? 'Sakop: ' + t.addr : ''].filter(Boolean);
-  const any = t.bio || facts.length || t.br.length || t.gl.length;
+  const ch = certsH(t.id), any = t.bio || facts.length || t.br.length || t.gl.length || ch;
   if (!any) return me ? `<p class="mute" style="font-size:14px">Wala pang nakalagay. Punan ang profile mo sa ibaba.</p>` : '';
-  return `<div class="tab2">${facts.length ? `<p class="tfacts">${facts.map(x => `<span>${esc(x)}</span>`).join('')}</p>` : ''}${t.bio ? `<p class="tbio">${esc(t.bio)}</p>` : ''}${t.br.length ? `<p class="gh">Brand na kabisado</p><div class="chips">${t.br.map(b => `<span class="chip st">${esc(b)}</span>`).join('')}</div>` : ''}${t.gl.length ? `<p class="gh">Mga natapos na trabaho</p><div class="tgal">${t.gl.map(g => `<a href="${esc(purl(g))}" target="_blank" rel="noopener"><img src="${esc(purl(g))}" alt="Litrato ng trabaho ni ${esc(first(t.n))}" loading="lazy"></a>`).join('')}</div>` : ''}</div>`;
+  return `<div class="tab2">${facts.length ? `<p class="tfacts">${facts.map(x => `<span>${esc(x)}</span>`).join('')}</p>` : ''}${t.bio ? `<p class="tbio">${esc(t.bio)}</p>` : ''}${ch}${t.br.length ? `<p class="gh">Brand na kabisado</p><div class="chips">${t.br.map(b => `<span class="chip st">${esc(b)}</span>`).join('')}</div>` : ''}${t.gl.length ? `<p class="gh">Mga natapos na trabaho</p><div class="tgal">${t.gl.map(g => `<a href="${esc(purl(g))}" target="_blank" rel="noopener"><img src="${esc(purl(g))}" alt="Litrato ng trabaho ni ${esc(first(t.n))}" loading="lazy"></a>`).join('')}</div>` : ''}</div>`;
+}
+// ---------- Certificate ng technician na nakikita ng customer (018_tech_certs.sql) ----------
+// Nasa pribadong bucket na 'tech-certs'. Ang aprubado ng admin lang ang nakikita ng customer, gamit ang pansamantalang link.
+const CRB = 'tech-certs', CKIND = { nc2: 'NC II', training: 'Training certificate' }, CSURL = {};
+let CERTS = [], CERT_AT = 0;
+async function loadCerts() { const { data } = await sb.from('tech_certs').select('*').order('created_at'); CERTS = data || []; CERT_AT = Date.now() }
+const certsOf = (id, all) => CERTS.filter(c => c.tech_id == id && (all || c.status == 'aprubado'));
+const cmeta = c => [CKIND[c.kind], c.issuer, c.issued_year].filter(Boolean).map(x => esc(String(x))).join(' · ');
+const VCHK = `<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+// Tile ng certificate (litrato o PDF). Pinupunan ng fillCerts() ang link at thumbnail.
+const certTile = (c, x = '') => `<div class="tcrt"><a class="tci" data-cp="${esc(c.path)}" data-cm="${esc(c.mime)}" target="_blank" rel="noopener" aria-label="Buksan ang ${esc(c.title)}"><span class="mute">Naglo-load…</span></a><span class="tct"><b>${esc(c.title)}</b><small>${cmeta(c)}</small>${c.status == 'aprubado' ? `<span class="vbd">${VCHK}Verified ng CoolFix</span>` : ''}${x}</span></div>`;
+function certsH(id) {
+  const L = certsOf(id); if (!L.length) return '';
+  setTimeout(fillCerts, 0);
+  return `<p class="gh">Mga certificate</p><div class="tcrts">${L.map(c => certTile(c)).join('')}</div><p class="mute" style="font-size:12px;margin:2px 0 0">Sinuri ng CoolFix ang mga certificate na ito bago ipakita.</p>`;
+}
+async function fillCerts() {
+  for (const el of [...document.querySelectorAll('[data-cp]:not([href])')]) {
+    const p = el.dataset.cp; let u = CSURL[p];
+    if (!u || u.t < Date.now() - 3e6) { const { data } = await sb.storage.from(CRB).createSignedUrl(p, 3600); u = CSURL[p] = { url: data && data.signedUrl, t: Date.now() } }
+    if (!el.isConnected) continue; const i = el;
+    if (!u.url) { i.innerHTML = `<span class="err">Hindi mabuksan</span>`; continue }
+    el.href = u.url; i.innerHTML = /^image\//.test(el.dataset.cm) ? `<img src="${esc(u.url)}" alt="" loading="lazy">` : `<span class="pdf">PDF</span>`;
+  }
+}
+const cpill = c => c.status == 'aprubado' ? `<span class="pill ok">Verified</span>` : c.status == 'tinanggihan' ? `<span class="pill no">Tinanggihan</span>` : `<span class="pill wt">Sinusuri</span>`;
+let CFM = { kind: 'nc2', t: '', i: '', y: '' }, CFILE = null;
+// Sa Tech dashboard: listahan ng certificate, pagdagdag, at shortcut para gamitin ang NC II na na-upload sa sign-up.
+function certBox() {
+  const u = USER, L = certsOf(u.id, true), sig = u.cert_type == 'nc2' && u.docs && u.docs.nc2 && !L.some(c => c.kind == 'nc2'), full = L.length >= 8;
+  return `<div class="jb cbox" id="cbox"><b>Mga certificate mo para sa customer</b><p class="mute" style="margin:4px 0 8px;font-size:14px">Ipakita ang NC II o training certificate mo para makita ng customer na legit ka. Susuriin muna ito ng admin. Kapag naaprubahan, lalabas ito sa profile mo na may tatak na <b>Verified ng CoolFix</b>.</p>
+  ${L.length ? `<div class="tcrts">${L.map(c => certTile(c, `<span class="tcs">${cpill(c)}${c.status == 'tinanggihan' && c.note ? `<small>Dahilan: ${esc(c.note)}</small>` : ''}<button type="button" class="chip" data-cx="${c.id}">Alisin</button></span>`)).join('')}</div>` : `<p class="mute" style="font-size:13px;margin:0 0 6px">Wala ka pang certificate na nakalagay.</p>`}
+  ${sig && !full ? `<button class="btn alt" id="csig" type="button">Ipakita ang NC II na na-upload ko sa sign-up</button>` : ''}
+  ${full ? `<p class="mute" style="font-size:13px">Hanggang 8 na certificate lang. Alisin muna ang isa para magdagdag.</p>` : `<details class="cadd" id="cadd"${CFILE || CFM.t ? ' open' : ''}><summary>+ Magdagdag ng certificate</summary>
+  <label>Uri<select id="cf_k">${Object.entries(CKIND).map(([k, v]) => `<option value="${k}" ${CFM.kind == k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+  <label>Pangalan ng certificate<input id="cf_t" maxlength="80" value="${esc(CFM.t)}" placeholder="hal. RAC Servicing (DomRAC) NC II"></label>
+  <label>Nagbigay (school, TESDA, brand)<input id="cf_i" maxlength="80" value="${esc(CFM.i)}" placeholder="hal. TESDA, Carrier Philippines"></label>
+  <label>Taon<input id="cf_y" type="number" min="1970" max="2100" inputmode="numeric" value="${esc(CFM.y)}" placeholder="hal. 2021"></label>
+  <label class="fl">Litrato o PDF ng certificate<input type="file" id="cf_f" accept="image/*,application/pdf"></label>${CFILE ? `<p class="mute" style="font-size:13px;margin:4px 0">📎 ${esc(CFILE.name)}</p>` : ''}
+  <p class="mute" style="font-size:12px;margin:4px 0">Siguraduhing malinaw at buo ang litrato. Huwag isama ang valid ID o ibang pribadong dokumento.</p>
+  <button class="btn" id="cf_s" type="button">I-submit para masuri</button></details>`}<p class="err" id="cfe" role="alert"></p></div>`;
+}
+async function addCert(kind, title, issuer, year, blob, mime) {
+  const ext = mime == 'application/pdf' ? 'pdf' : mime == 'image/png' ? 'png' : mime == 'image/webp' ? 'webp' : 'jpg';
+  const path = `${USER.id}/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.${ext}`;
+  const up = await sb.storage.from(CRB).upload(path, blob, { contentType: mime });
+  if (up.error) return 'Hindi na-upload: ' + up.error.message;
+  const { data, error } = await sb.from('tech_certs').insert({ tech_id: USER.id, kind, title, issuer, issued_year: year, path, mime }).select('*').single();
+  if (error) return 'Hindi na-save: ' + error.message;
+  CERTS.push(data); return '';
+}
+function bindCertBox() {
+  const box = $('cbox'); if (!box) return;
+  const rer = () => { box.outerHTML = certBox(); bindCertBox(); fillCerts() }, er = m => { $('cfe').textContent = m };
+  const keep = () => { if ($('cf_k')) CFM = { kind: $('cf_k').value, t: $('cf_t').value, i: $('cf_i').value, y: $('cf_y').value } };
+  if ($('cf_f')) $('cf_f').onchange = () => { keep(); const f = $('cf_f').files[0]; if (!f) return; if (!/^image\//.test(f.type) && f.type != 'application/pdf') { er('Litrato o PDF lang ang pwede.'); return } if (f.type == 'application/pdf' && f.size > 5e6) { er('Masyadong malaki ang PDF (max 5 MB).'); return } CFILE = f; rer() };
+  if ($('cf_s')) $('cf_s').onclick = async () => {
+    keep(); const t = CFM.t.trim(), y = CFM.y.trim() === '' ? null : Math.round(Number(CFM.y));
+    if (t.length < 2) return er('Ilagay ang pangalan ng certificate.');
+    if (y != null && !(y >= 1970 && y <= new Date().getFullYear())) return er('Ilagay ang tamang taon.');
+    if (!CFILE) return er('Pumili ng litrato o PDF ng certificate.');
+    busy('cf_s', true); $('cf_s').textContent = 'Ina-upload…';
+    let blob = CFILE, mime = CFILE.type;
+    if (mime != 'application/pdf') { try { blob = await shrink(CFILE, 1800, false); mime = 'image/jpeg' } catch (e) { busy('cf_s', false); $('cf_s').textContent = 'I-submit para masuri'; return er(e.message) } }
+    const e = await addCert(CFM.kind, t, CFM.i.trim(), y, blob, mime);
+    if (e) { busy('cf_s', false); $('cf_s').textContent = 'I-submit para masuri'; return er(e) }
+    CFM = { kind: 'training', t: '', i: '', y: '' }; CFILE = null; rer();
+  };
+  if ($('csig')) $('csig').onclick = async () => {
+    busy('csig', true); $('csig').textContent = 'Kinokopya…'; const d = USER.docs.nc2;
+    const { data, error } = await sb.storage.from('tech-docs').download(d.path);
+    const e = error || !data ? 'Hindi makuha ang NC II mo: ' + (error ? error.message : 'walang file') : await addCert('nc2', 'NC II Certificate', 'TESDA', null, data, d.type || data.type || 'image/jpeg');
+    if (e) { busy('csig', false); $('csig').textContent = 'Ipakita ang NC II na na-upload ko sa sign-up'; return er(e) }
+    rer();
+  };
+  box.querySelectorAll('[data-cx]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const { error } = await sb.from('tech_certs').delete().eq('id', +b.dataset.cx);
+    if (error) { b.disabled = false; return er('Hindi natanggal: ' + error.message) }
+    CERTS = CERTS.filter(c => c.id != +b.dataset.cx); rer();
+  });
+  fillCerts();
+  // Kunin ulit kada minuto para makita agad kung naaprubahan na.
+  if (Date.now() - CERT_AT > 6e4) { const was = JSON.stringify(certsOf(USER.id, true)); loadCerts().then(() => { if ($('cbox') && JSON.stringify(certsOf(USER.id, true)) != was) rer() }) }
+}
+// Admin: pag-apruba ng certificate. rer() = i-render ulit ang screen.
+function certAdmH(L, who) {
+  return L.length ? `<div class="tcrts">${L.map(c => { const u = who && PROFILES.find(p => p.id == c.tech_id); return certTile(c, `<span class="tcs">${u ? `<small>${esc(u.name)}</small>` : ''}${cpill(c)}${c.note ? `<small>Dahilan: ${esc(c.note)}</small>` : ''}${c.status != 'tinanggihan' ? `<input data-cn="${c.id}" maxlength="300" placeholder="Dahilan kung tatanggihan">` : ''}<span class="row2 cra"><button type="button" class="chip" data-ca="${c.id}" ${c.status == 'aprubado' ? 'disabled' : ''}>Aprubahan</button><button type="button" class="chip" data-cr="${c.id}" ${c.status == 'tinanggihan' ? 'disabled' : ''}>Tanggihan</button></span></span>`) }).join('')}</div><p class="err" id="cae" role="alert"></p>` : `<p class="mute">Walang certificate.</p>`;
+}
+function bindCertAdm(rer) {
+  const set = async (b, st) => {
+    const id = +(b.dataset.ca || b.dataset.cr); let note = '';
+    if (st == 'tinanggihan') { const n = A.querySelector(`[data-cn="${id}"]`); note = n ? n.value.trim() : ''; if (!note) { if ($('cae')) $('cae').textContent = 'Ilagay kung bakit tinanggihan, para alam ng technician ang aayusin.'; if (n) n.focus(); return } }
+    b.disabled = true;
+    const { data, error } = await sb.from('tech_certs').update({ status: st, note }).eq('id', id).select('*').single();
+    if (error) { b.disabled = false; if ($('cae')) $('cae').textContent = 'Hindi na-save: ' + error.message; return }
+    const i = CERTS.findIndex(c => c.id == id); if (i >= 0) CERTS[i] = data; rer();
+  };
+  A.querySelectorAll('[data-ca]').forEach(b => b.onclick = () => set(b, 'aprubado'));
+  A.querySelectorAll('[data-cr]').forEach(b => b.onclick = () => set(b, 'tinanggihan'));
+  fillCerts();
 }
 // Gaano kakumpleto ang profile ng technician
 const profParts = u => [['Profile pic', !!u.avatar], ['Tungkol sa iyo', (u.bio || '').trim().length >= 20], ['Taon ng karanasan', u.years_exp != null], ['Brand na kabisado', (u.brands || []).length > 0], ['Litrato ng trabaho', (u.gallery || []).length > 0]];
@@ -598,10 +699,10 @@ async function enter() {
   subscribe(); techPoll(); document.body.classList.toggle('adm', u.role == 'admin'); document.documentElement.style.background = u.role == 'admin' ? '#091233' : '';
   TAB = u.role == "customer" ? "find" : u.role == "admin" ? "ov" : "dash"; CUR = null;
   if (u.role == "customer") {
-    await Promise.all([loadTechs(), loadStats(), loadReports(), loadMine()]); const rn = await autoRef(); show(); initGM(); if (rn) alertNote2(rn);
+    await Promise.all([loadTechs(), loadStats(), loadReports(), loadMine(), loadCerts()]); const rn = await autoRef(); show(); initGM(); if (rn) alertNote2(rn);
     getLoc().then(p => { if (p) { C = p; CK = true; TECHS.forEach(place); if (VIEW == "home") home(); if (GL) mapMe() } });
-  } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs(), loadTopups(), loadReports(), loadInstalls(), loadPromo()]); show() }
-  else { await loadWallet(); syncWatch(); if (PMRET) TAB = 'wl'; show(); if (PMRET) { const r = PMRET; PMRET = ''; A.firstElementChild.insertAdjacentHTML('afterbegin', r == 'ok' ? `<p class="note">Salamat! Papasok ang credits sa wallet mo sa loob ng ilang segundo, kapag nakumpirma na ng PayMongo ang bayad.</p>` : `<p class="note">Hindi natuloy ang bayad. Walang nabawas sa iyo. Pwede mong subukan ulit.</p>`) } }
+  } else if (u.role == "admin") { await Promise.all([loadProfiles(), loadTechs(), loadTopups(), loadReports(), loadInstalls(), loadPromo(), loadCerts()]); show() }
+  else { await Promise.all([loadWallet(), loadCerts()]); syncWatch(); if (PMRET) TAB = 'wl'; show(); if (PMRET) { const r = PMRET; PMRET = ''; A.firstElementChild.insertAdjacentHTML('afterbegin', r == 'ok' ? `<p class="note">Salamat! Papasok ang credits sa wallet mo sa loob ng ilang segundo, kapag nakumpirma na ng PayMongo ang bayad.</p>` : `<p class="note">Hindi natuloy ang bayad. Walang nabawas sa iyo. Pwede mong subukan ulit.</p>`) } }
   deepLink();
   if (u.role != 'admin') pushSub(false).then(r => { if (r == 'on' && (VIEW == 'dash' || VIEW == 'me' || VIEW == 'track')) document.querySelectorAll('.pushb').forEach(x => x.remove()) });
 }
@@ -691,7 +792,7 @@ function tabList() {
 const ICON = { pm: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01M15 9l-6 6M9.5 9.5h.01M14.5 14.5h.01"/>', cu: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>', cs: '<path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v6M12 16.5v.01"/>', rp: '<path d="M5 21V4h11l-1.5 4L16 12H5"/>', ov: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>', rq: '<path d="M14 3H6v18h12V7zM14 3v4h4M9 13l2 2 4-4"/>', tx: '<path d="M4 6h16M4 12h16M4 18h10"/>', tt: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11l2 2 4-4"/>', sv: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>', pr: '<path d="M20 12l-8 8-9-9V3h8zM7.5 7.5h.01"/>', rg: '<path d="M4 4h12l4 4v12H4zM8 12h8M8 16h5"/>', wl: '<path d="M3 7h16v12H3zM3 7l12-4v4M15 13h2"/>' };
 function tabsBar() {
   bell(); const nb = $('tabs'), ad = USER.role == 'admin'; nb.hidden = false;
-  nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${ICON[k] ? `<svg class="ti" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>` : ''}<span>${l}</span>${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}${k == 'rq' && PROFILES.some(u => u.role == 'technician' && u.doc_status == 'sinusuri') ? ' <i class="dot"></i>' : ''}${k == 'rp' && REPS.some(x => x.status == 'bago') ? ' <i class="dot"></i>' : ''}${k == 'cs' && REPS.some(x => x.status != 'bago' && x.admin_note && tms(x.updated_at) > nRead()) ? ' <i class="dot"></i>' : ''}${k == 'wl' && (ad ? TOPS.some(x => x.status == 'sinusuri') : wLow()) ? ' <i class="dot"></i>' : ''}</button>`).join('');
+  nb.innerHTML = tabList().map(([k, l]) => `<button class='tab' aria-pressed='${TAB == k}' data-t='${k}'>${ICON[k] ? `<svg class="ti" viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>` : ''}<span>${l}</span>${k == 'chat' && unreadN() ? ' <i class="dot"></i>' : ''}${k == 'rq' && (PROFILES.some(u => u.role == 'technician' && u.doc_status == 'sinusuri') || CERTS.some(c => c.status == 'sinusuri')) ? ' <i class="dot"></i>' : ''}${k == 'rp' && REPS.some(x => x.status == 'bago') ? ' <i class="dot"></i>' : ''}${k == 'cs' && REPS.some(x => x.status != 'bago' && x.admin_note && tms(x.updated_at) > nRead()) ? ' <i class="dot"></i>' : ''}${k == 'wl' && (ad ? TOPS.some(x => x.status == 'sinusuri') : wLow()) ? ' <i class="dot"></i>' : ''}</button>`).join('');
   nb.querySelectorAll('button').forEach(b => b.onclick = () => { TAB = b.dataset.t; CUR = null; if (TAB == 'find') TRACK = null; show() });
 }
 function show() {
@@ -741,7 +842,7 @@ function home() {
   if (GL) gClear(); $("route").innerHTML = ""; sel = null;
   pins();
   const L = list(), act = myBookings().filter(x => ACTIVE.includes(x.st)), unr = myBookings().find(x => x.st == 'Natapos' && !x.rating && Date.now() - tms(x.done_at || x.updated_at) < 7 * 864e5), inCart = (c, x) => CART.find(y => y.c == c.k && y.n == x[0]);
-  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}">${avH(t.n, t.av)}<div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}${stars(t.id)}<small>${t.yx ? esc(yrs(t.yx)) + ' · ' : ''}${esc(t.s.join(', '))}</small></div><div class="km">${kmTxt(t)}<span class="bkp">I-book</span></div></button>`).join("") || `<p class="mute">Wala pang online na technician na kaya ${CART.length > 1 ? 'lahat ng nasa cart mo' : 'ang serbisyong ito'}. ${CART.length > 1 ? 'Subukang hatiin sa dalawang booking, o ' : ''}subukan ulit mamaya.</p>`;
+  const tl = L.map(t => `<button class="t" data-i="${esc(t.id)}">${avH(t.n, t.av)}<div><b>${esc(t.n)}</b>${certified(t) ? CERT : ''}${certsOf(t.id).length ? `<span class="ctag">${VCHK}${certsOf(t.id).length} verified na certificate</span>` : ''}${stars(t.id)}<small>${t.yx ? esc(yrs(t.yx)) + ' · ' : ''}${esc(t.s.join(', '))}</small></div><div class="km">${kmTxt(t)}<span class="bkp">I-book</span></div></button>`).join("") || `<p class="mute">Wala pang online na technician na kaya ${CART.length > 1 ? 'lahat ng nasa cart mo' : 'ang serbisyong ito'}. ${CART.length > 1 ? 'Subukang hatiin sa dalawang booking, o ' : ''}subukan ulit mamaya.</p>`;
   const hd = `<div class='hrow'><button class='hav' id='hav' type='button' aria-label='${USER.avatar ? 'Account mo' : 'Maglagay ng profile pic'}'>${avH(USER.name, USER.avatar, 'big')}${USER.avatar ? '' : '<i aria-hidden="true">+</i>'}</button><div class='hello'><b>Kumusta, ${esc(first(USER.name))}!</b><span>${TECHS.filter(t => t.online).length} technician ang online ngayon</span></div></div><div class='stats' id='hstats'>${statsHtml()}</div>${act.length ? `<p class="note">May aktibo kang booking. <button class="chip" id="ab">Tingnan</button></p>` : unr ? `<p class="note">Paano ang serbisyo ni ${esc(first(unr.tech_name))}? <button class="chip" id="rtb">I-rate</button></p>` : ""}`;
   let body;
   if (!cat) body = `<h2>${CART.length ? 'Magdagdag pa ng serbisyo' : 'Anong serbisyo ang kailangan mo?'}</h2><div class="cats">${CAT.map((c, i) => `<button class="cat" data-c="${i}"><b>${esc(c.t)}</b><small>${esc(c.d)}</small></button>`).join("")}</div><p class="mute" style="font-size:13px">Pwedeng magdagdag ng ilang serbisyo sa iisang booking. Tingnan ang <b>Rate guide</b> para sa lahat ng presyo.</p>`;
@@ -1019,8 +1120,9 @@ function techDash() {
     : `<div class="jb doc ${ds}"><b>${noId && ds != "kulang" ? "Kailangan na rin ng Valid ID" : ds == "aprubado" ? "Palitan ang dokumento" : ds == "sinusuri" ? "Sinusuri na ng admin ang dokumento mo" : ds == "tinanggihan" ? "Hindi naaprubahan ang dokumento mo" : "Kailangan ng dokumento bago makatanggap ng booking"}</b>
     <p class="mute" style="margin:4px 0">${noId && ds != "kulang" ? `Bagong requirement ang valid ID para sa lahat ng technician. I-upload ito sa ibaba.${ds == "aprubado" ? " Susuriin ulit ito ng admin, kaya hindi ka muna makakapag-online hangga't hindi naaaprubahan." : ""}` : ds == "sinusuri" && !RE ? `${ctName(u.cert_type)} · ${REQ ? "Makakapag-online ka kapag naaprubahan na ng admin." : "Pwede ka nang mag-online habang sinusuri."}` : ds == "tinanggihan" ? `Dahilan: ${esc(u.doc_note || "—")}. Mag-upload ulit ng malinaw na kopya.` : ds == "aprubado" ? "Kapag nagpalit ka, susuriin ulit ito ng admin at hindi ka muna makakapag-online." : "I-upload ang valid ID at NC II certificate mo. Kung walang NC II, ang DTI Business Permit at BIR COR (Form 2303)."}</p>
     ${form ? `<div id="dz"></div><p class="err" id="dze" role="alert"></p><button class="btn" id="dsub">I-submit ang dokumento</button>${RE ? `<button class="btn alt" id="dcx">Huwag na</button>` : ""}` : `<button class="chip" id="reup">Palitan ang dokumento</button>`}</div>`;
-  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p><button type="button" class="olbar${u.online ? " on" : ""}" id="ol" role="switch" aria-checked="${!!u.online}" ${lock ? "disabled" : ""}><span class="old"></span><span class="nt"><b>${u.online ? "Online ka" : "Offline ka"}</b><small>${u.online ? "Nakikita ka ng mga customer at pwede kang ma-book. I-tap para mag-offline." : lock ? (!dlock ? `Kulang ang wallet mo (minimum ${fmt(WMIN)}). Mag-top up muna para makapag-online.` : ds == "sinusuri" ? "Hinihintay ang pag-apruba ng admin sa dokumento mo." : "I-upload muna ang dokumento sa ibaba para makapag-online.") : "Hindi ka nakikita ng mga customer. I-tap para mag-online."}</small></span><span class="sw" aria-hidden="true"><i></i></span></button>${pushBox()}${docBox}${profMini()}${walletMini()}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><p class="err" id="de" role="alert"></p>${techCal(J)}<h3 style="margin:16px 0 4px">Mga aktibong booking</h3><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<div id="myrv"></div>${commBox(u)}<p class="err" id="pe" role="alert"></p></div>`;
+  A.innerHTML = `<div class="panel au"><h2>Kumusta, ${esc(first(u.name))}!</h2><p class="mute" style="margin:0">${esc((u.services || []).join(", "))} · ${esc(u.addr || "—")}</p><button type="button" class="olbar${u.online ? " on" : ""}" id="ol" role="switch" aria-checked="${!!u.online}" ${lock ? "disabled" : ""}><span class="old"></span><span class="nt"><b>${u.online ? "Online ka" : "Offline ka"}</b><small>${u.online ? "Nakikita ka ng mga customer at pwede kang ma-book. I-tap para mag-offline." : lock ? (!dlock ? `Kulang ang wallet mo (minimum ${fmt(WMIN)}). Mag-top up muna para makapag-online.` : ds == "sinusuri" ? "Hinihintay ang pag-apruba ng admin sa dokumento mo." : "I-upload muna ang dokumento sa ibaba para makapag-online.") : "Hindi ka nakikita ng mga customer. I-tap para mag-online."}</small></span><span class="sw" aria-hidden="true"><i></i></span></button>${pushBox()}${docBox}${certBox()}${profMini()}${walletMini()}<div class='stats'><div><b>${fmt(earn)}</b><small>Kita ngayon (${TPCT})</small></div><div><b>${done.length}</b><small>Natapos</small></div><div><b>${unreadN()}</b><small>Bagong mensahe</small></div></div><p class="err" id="de" role="alert"></p>${techCal(J)}<h3 style="margin:16px 0 4px">Mga aktibong booking</h3><div aria-live="polite">${act.length ? act.map(card).join('') : `<p class="mute">${u.online ? "Naghihintay ng request… Lalabas dito ang bagong booking." : lock ? "Makikita ka ng mga customer kapag aprubado na ang dokumento mo at naka-Online ka." : "Offline ka. I-on ang Online para makita ka ng mga customer."}</p>`}</div>${earnBox(J)}<div id="myrv"></div>${commBox(u)}<p class="err" id="pe" role="alert"></p></div>`;
   if ($("dz")) { if (!CT) CT = u.cert_type || null; mountDocs($("dz")) }
+  bindCertBox();
   if ($("reup")) $("reup").onclick = () => { RE = true; techDash() };
   if ($("dcx")) $("dcx").onclick = () => { RE = false; FILES = {}; techDash() };
   if ($("dsub")) $("dsub").onclick = async () => {
@@ -1430,11 +1532,13 @@ function admRq() {
   const F = [['sinusuri', 'Naghihintay'], ['tinanggihan', 'Tinanggihan'], ['kulang', 'Kulang pa'], ['aprubado', 'Aprubado'], ['Lahat', 'Lahat']];
   const L = T.filter(u => RQF == 'Lahat' || st(u) == RQF).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
   A.innerHTML = `<div class='dash'><div class='dh'><div><h2>Requirements ng technician</h2><p class='mute'>Valid ID, at NC II o DTI Permit + BIR COR. Suriin bago payagang tumanggap ng booking.</p></div></div>
+  ${(() => { const P = CERTS.filter(c => c.status == 'sinusuri'); return `<section class='card rq' id='crq'><div class='ch'><div><h3>Certificate na ipapakita sa customer ${P.length ? `<span class='pill wt'>${P.length} naghihintay</span>` : ''}</h3><span class='mute'>NC II o training certificate na ipinasa ng technician. Ang aprubado lang ang makikita ng customer, na may tatak na Verified.</span></div></div>${P.length ? certAdmH(P, true) : `<p class='mute' style='margin:0'>Walang naghihintay na certificate ngayon.</p>`}</section>` })()}
   <div class='chips' role='group' aria-label='Status'>${F.map(([k, l]) => `<button class='chip' aria-pressed='${RQF == k}' data-rf='${k}'>${l} <b>${k == 'Lahat' ? T.length : cnt(k)}</b></button>`).join('')}</div>
   ${L.length ? L.map(u => `<section class='card rq'><div class='ch'><div><h3>${esc(u.name)} ${dpill(st(u))}</h3><span class='mute'>${esc(u.email || '')} · ${esc(u.phone || '')} · ${ctName(u.cert_type)}</span></div><button class='chip' data-rv='${esc(u.id)}'>Suriin at aprubahan</button></div>${u.doc_note && st(u) == 'tinanggihan' ? `<p class='mute' style='margin:0 0 8px'>Dahilan: ${esc(u.doc_note)}</p>` : ''}<div class='docs'>${docKeys(u.cert_type).map(k => docTile(u, k)).join('')}</div></section>`).join('') : `<section class='card'><p class='mute'>${RQF == 'sinusuri' ? 'Walang naghihintay na requirement ngayon.' : 'Walang technician dito.'}</p></section>`}</div>`;
   A.querySelectorAll('[data-rf]').forEach(b => b.onclick = () => { RQF = b.dataset.rf; admRq() });
   A.querySelectorAll('[data-rv]').forEach(b => b.onclick = () => admDoc(b.dataset.rv));
   fillTiles('rq');
+  bindCertAdm(admRq);
 }
 async function admDoc(id) {
   VIEW = 'doc'; const u = PROFILES.find(p => p.id == id); if (!u) return adminView();
@@ -1442,6 +1546,7 @@ async function admDoc(id) {
   A.innerHTML = `<div class='panel au wide'><button class='chip' id='bk'>← Bumalik</button><h2 style='margin-top:12px'>${esc(u.name)}</h2><p class='mute' style='margin:0'>${esc(u.email || '')} · ${esc(u.phone || '')}<br>${esc((u.services || []).join(', '))} · ${esc(u.addr || '—')}</p>
   <p>Uri ng dokumento: <b>${ctName(u.cert_type)}</b> ${dpill(u.doc_status)}</p>
   ${miss.length ? `<p class='note'>Kulang pa: <b>${miss.join(', ')}</b>${u.cert_type ? '' : ' (hindi pa pumipili ng NC II o DTI + BIR COR)'}</p>` : ''}<div class='docs'>${docKeys(u.cert_type).map(k => docTile(u, k)).join('')}</div>
+  <h3 style='margin:16px 0 4px'>Certificate na ipapakita sa customer</h3>${certAdmH(certsOf(u.id, true), false)}
   ${u.doc_note ? `<p class='mute'>Huling dahilan ng pagtanggi: ${esc(u.doc_note)}</p>` : ''}
   <label>Dahilan kung tatanggihan (makikita ito ng technician)<input id='dn' placeholder='hal. Malabo ang litrato ng NC II'></label><p class='err' id='dre' role='alert'></p>
   <div class='row2'><button class='btn' id='dok' ${miss.length ? 'disabled title="Kulang pa ang requirements"' : ''}>Aprubahan</button><button class='btn alt' id='dno'>Tanggihan</button></div></div>`;
@@ -1455,6 +1560,7 @@ async function admDoc(id) {
   };
   $('dok').onclick = () => set('aprubado'); $('dno').onclick = () => set('tinanggihan');
   fillTiles('doc');
+  bindCertAdm(() => admDoc(id));
 }
 function admSv() {
   if (!ED) ED = { c: cl(CAT), o: cl(OC), n: [...NC2] };

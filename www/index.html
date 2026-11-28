@@ -222,7 +222,7 @@ body.adm .err{color:#FF8A80}
 .wmini{display:flex;width:100%;align-items:center;gap:12px;text-align:left;margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);font:inherit;cursor:pointer}.wmini>span:first-child{display:flex;flex-direction:column}.wmini b{font-size:20px}.wmini small{font-size:12px;color:var(--mute)}.wmini .mute{flex:1;font-size:13px}.wmini.low,.wbig.low{border-color:#E5484D;background:#FFF0F0;color:#7A1518}
 .wbig{display:flex;flex-direction:column;gap:2px;padding:14px;border-radius:14px;border:1px solid var(--line);background:var(--bg);margin:8px 0}.wbig b{font-size:32px}.wbig small,.wbig span{font-size:13px}
 .neg{color:#B42318}.pos{color:#1B7F3B}.steps2{padding-left:20px;font-size:14px}
-.qf{margin:8px 0}.qf summary{cursor:pointer;color:var(--blue);font-weight:600;font-size:14px;padding:6px 0}
+.qf,.cadd{margin:8px 0}.qf summary,.cadd summary{cursor:pointer;color:var(--blue);font-weight:600;font-size:14px;padding:6px 0}
 .tpr{display:grid;grid-template-columns:minmax(120px,200px) 1fr;gap:12px;padding:12px 0;border-top:1px solid var(--line)}.tpr:first-of-type{border-top:0}.tpr img{width:100%;max-height:300px;object-fit:contain;border-radius:8px;background:var(--bg)}.tpr input{margin-top:8px}
 @media (max-width:560px){.tpr{grid-template-columns:1fr}}
 @media (prefers-color-scheme:dark){.note.wty{background:#0F3322;color:#BFF0CF;border-color:#1F6B42}.wmini.low,.wbig.low{background:#3A1216;color:#FFD4D6}}
@@ -243,6 +243,7 @@ img.av{object-fit:cover;background:var(--block);padding:0}.av.xl{width:84px;heig
 .tph{display:flex;gap:12px;align-items:center}.tph h2+.cert{margin:3px 0}.tph .star{display:flex;width:max-content;margin:2px 0}
 .tab2{margin:8px 0 4px}.tfacts{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.tfacts span{background:var(--bg);border:1px solid var(--line);border-radius:99px;padding:3px 10px;font-size:13px}
 .tbio{margin:6px 0;white-space:pre-line;line-height:1.45}.chip.st{cursor:default;font-size:13px;padding:4px 10px}
+.tcrts{display:grid;gap:8px;margin:6px 0}.tcrt{display:flex;gap:10px;align-items:flex-start;padding:8px;border:1px solid var(--line);border-radius:12px;background:var(--bg)}.tcrt .tci{flex:none;width:84px;height:64px;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--block);font-size:11px;text-decoration:none}.tcrt .tci img{width:100%;height:100%;object-fit:cover;display:block}.tcrt .pdf{font-weight:800;color:#C0392B;font-size:14px}.tct{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}.tct b{font-size:14px}.tct small{color:var(--mute);font-size:12px}.vbd,.ctag{display:inline-flex;align-items:center;gap:3px;width:max-content;padding:1px 7px;border-radius:99px;background:#E3F6EA;color:#13703A;font-size:11px;font-weight:700}.ctag{display:flex;margin:3px 0;background:#E6EEFF;color:#1A3FA0}.tcs{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:4px}.tcs input{flex:1 1 100%;margin:0}.tcs .row2{display:flex;gap:6px}.cbox{margin-top:12px}.cbox #csig{margin-top:6px}
 .tgal{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:6px 0}.tgal img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:10px;display:block;background:var(--block)}
 .gi{position:relative}.gx{position:absolute;top:4px;right:4px;width:28px;height:28px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:18px;line-height:1;cursor:pointer}
 .au label.gadd{margin:0;aspect-ratio:1/1;border:2px dashed var(--line);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;color:var(--mute)}.gadd span{font-size:30px;line-height:1}.gadd:focus-within{outline:3px solid var(--blue)}
@@ -281,7 +282,7 @@ img.av{object-fit:cover;background:var(--block);padding:0}.av.xl{width:84px;heig
 <script src="config.js?v=20261128-5"></script>
 <script src="vendor/supabase.js"></script>
 <script src="vendor/leaflet/leaflet.js"></script>
-<script src="app.js?v=20261128-5"></script>
+<script src="app.js?v=20261128-6"></script>
 <script src="pwa.js?v=20261128-5"></script>
 </body>
 </html>

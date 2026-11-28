@@ -1,5 +1,5 @@
 (function(){
-const DB={profiles:[],bookings:[],conversations:[],messages:[],settings:[],wallets:[],wallet_tx:[],topups:[],reports:[],app_installs:[],credits:[],referrals:[],repeat_plans:[],promo_codes:[],ref_codes:[],push_subs:[]};let seq=1,uid=null;const subs=[];
+const DB={profiles:[],bookings:[],conversations:[],messages:[],settings:[],wallets:[],wallet_tx:[],topups:[],reports:[],app_installs:[],credits:[],referrals:[],repeat_plans:[],promo_codes:[],ref_codes:[],push_subs:[],tech_certs:[]};let seq=1,uid=null;const subs=[];
 const users=[];const listeners=[];
 const now=()=>new Date().toISOString();
 function emit(table,ev,row){subs.forEach(s=>{if(s.table==table&&(s.event=='*'||s.event==ev))setTimeout(()=>s.cb({new:JSON.parse(JSON.stringify(row))}),5)})}
@@ -11,9 +11,11 @@ Q.prototype.order=function(){return this};Q.prototype.limit=function(){return th
 Q.prototype.single=function(){this.one=true;return this};
 Q.prototype.insert=function(o){this.op='insert';this.o=o;return this};
 Q.prototype.update=function(o){this.op='update';this.o=o;return this};
+Q.prototype.delete=function(){this.op='delete';return this};
 Q.prototype.upsert=function(o,opt){this.op='upsert';this.o=o;this.opt=opt;return this};
 Q.prototype.then=function(res,rej){try{res(this.run())}catch(e){rej(e)}};
 function defaults(t,o){o={...o};if(t=='bookings'){o.id=seq++;o.code='CF-'+(1000+o.id);o.status=o.status||'Bago';o.created_at=o.updated_at=now();Object.assign(o,{discount:o.discount||0,promo:o.promo||'',warranty_of:o.warranty_of||null,cust_note:o.cust_note||'',plan_id:null,cust_phone:'',rate:o.warranty_of?0:20,extra_amt:0,extra_note:'',q_status:'wala',q_amt:null,q_note:'',final_amt:null,commission:null,rating:null,review:''})}
+ if(t=='tech_certs'){o.id=seq++;o.status='sinusuri';o.note='';o.created_at=now();o.issuer=o.issuer||'';o.issued_year=o.issued_year??null}
  if(t=='promo_codes'){o.active=o.active??true;o.created_at=now()}
  if(t=='topups'){o.id=seq++;o.status='sinusuri';o.note='';o.created_at=now()}
  if(t=='reports'){o.id=seq++;o.code='RP-'+(1000+o.id);o.status=o.status||'bago';o.admin_note=o.admin_note||'';o.created_at=o.updated_at=now()}
@@ -23,6 +25,7 @@ Q.prototype.run=function(){const T=DB[this.t];let rows;
  if(this.op=='select'){rows=T.filter(r=>this.f.every(f=>f(r)))}
  else if(this.op=='insert'){if(this.t=='bookings'&&this.o.sched_at){const m=new Date(this.o.sched_at).getTime();if(m<Date.now()-3e5)return{data:null,error:{message:'Lumipas na ang oras na pinili mo. Pumili ng ibang oras'}};if(T.some(x=>x.tech_id==this.o.tech_id&&x.sched_at&&ACT.includes(x.status)&&Math.abs(new Date(x.sched_at).getTime()-m)<72e5))return{data:null,error:{message:'May booking na ang technician sa oras na ito. Pumili ng ibang oras'}}}if(this.t=='bookings'&&low(this.o.tech_id))return{data:null,error:{message:'Hindi available ngayon ang technician na ito. Pumili ng iba'}};if(this.t=='bookings'){const e=prepX(this.o);if(e)return{data:null,error:{message:e}}}const r=defaults(this.t,this.o);if(this.t=='bookings'&&r.promo=='CREDIT'){const c=DB.credits.find(x=>x.user_id==r.customer_id&&!x.booking_id);if(c)c.booking_id=r.id}T.push(r);rows=[r];emit(this.t,'INSERT',r)}
  else if(this.op=='update'){rows=T.filter(r=>this.f.every(f=>f(r)));if(this.t=='profiles'&&this.o.online&&rows.some(r=>r.role=='technician'&&(this.o.doc_status||r.doc_status)!='aprubado'))return {data:null,error:{message:'Hindi pa aprubado ang mga dokumento mo'}};if(this.t=='profiles'&&this.o.online&&rows.some(r=>r.role=='technician'&&low(r.id)))return{data:null,error:{message:'Kulang ang wallet balance mo'}};rows.forEach(r=>{const was=r.status;Object.assign(r,this.o);if(this.t=='reports')r.updated_at=now();if(this.t=='bookings'){r.updated_at=now();if(r.status=='Natapos'&&was!='Natapos'){r.final_amt=r.amt+r.extra_amt;r.commission=Math.round(r.final_amt*r.rate/100);r.done_at=now();r.warranty_until=new Date(Date.now()+30*864e5).toISOString();wadd(r.tech_id,'commission',-r.commission,'Commission · '+r.code);if(r.booking_fee)wadd(r.tech_id,'booking_fee',-r.booking_fee,'Booking fee · '+r.code);if(r.discount)wadd(r.tech_id,'promo',r.discount,'Discount · '+r.code);const rf=DB.referrals.find(x=>x.new_user==r.customer_id&&!x.rewarded_at);if(rf){rf.rewarded_at=now();DB.credits.push({id:seq++,user_id:rf.referrer,amt:setv('ref_inv')??50,note:'Referral',booking_id:null,created_at:now()})}}if(['Kinansela','Tinanggihan'].includes(r.status))DB.credits.forEach(c=>{if(c.booking_id==r.id)c.booking_id=null})}emit(this.t,'UPDATE',r)})}
+ else if(this.op=='delete'){rows=T.filter(r=>this.f.every(f=>f(r)));rows.forEach(r=>T.splice(T.indexOf(r),1))}
  else if(this.op=='upsert'){const keys=(this.opt?.onConflict||(this.t=='settings'?'key':'id')).split(',');let r=T.find(x=>keys.every(k=>x[k]==this.o[k]));if(r)Object.assign(r,this.o);else{r=defaults(this.t,this.o);T.push(r)}rows=[r]}
  rows=JSON.parse(JSON.stringify(rows));
  if(this.one)return rows[0]?{data:rows[0],error:null}:{data:null,error:{message:'not found'}};return {data:rows,error:null}};
@@ -64,7 +67,7 @@ const auth={
  onAuthStateChange(cb){listeners.push(cb);return{data:{subscription:{unsubscribe(){}}}}},
  async resetPasswordForEmail(){return{error:null}},async updateUser(){return{error:null}},async signInWithOAuth(){return{error:{message:'no google'}}}};
 const FILES={};window.__FILES=FILES;
-const PURL={};const storage={from:b=>({async upload(path,f){FILES[b+'/'+path]=f;return{data:{path},error:null}},getPublicUrl(path){const k=b+'/'+path,f=FILES[k];return{data:{publicUrl:f?(PURL[k]=PURL[k]||URL.createObjectURL(f)):'https://x/'+k}}},async remove(ps){ps.forEach(q=>delete FILES[b+'/'+q]);return{data:[],error:null}},async createSignedUrl(path){const f=FILES[b+'/'+path];return f?{data:{signedUrl:URL.createObjectURL(f)},error:null}:{data:null,error:{message:'not found'}}}})};
+const PURL={};const storage={from:b=>({async upload(path,f){FILES[b+'/'+path]=f;return{data:{path},error:null}},getPublicUrl(path){const k=b+'/'+path,f=FILES[k];return{data:{publicUrl:f?(PURL[k]=PURL[k]||URL.createObjectURL(f)):'https://x/'+k}}},async remove(ps){ps.forEach(q=>delete FILES[b+'/'+q]);return{data:[],error:null}},async download(path){const f=FILES[b+'/'+path];return f?{data:f,error:null}:{data:null,error:{message:'not found'}}},async createSignedUrl(path){const f=FILES[b+'/'+path];return f?{data:{signedUrl:URL.createObjectURL(f)},error:null}:{data:null,error:{message:'not found'}}}})};
 window.__DB=DB;window.__users=users;
 window.supabase={createClient(){return{auth,storage,from:t=>new Q(t),
  functions:{async invoke(fn,o){window.__INVOKED=[fn,o&&o.body];const r=window.__FN&&window.__FN[fn];return r?r(o&&o.body):{data:null,error:{message:'no fn',context:{json:async()=>({error:'Hindi pa naka-set up ang online na bayad.'})}}}}},
