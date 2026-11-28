@@ -56,5 +56,22 @@ async function ctxFor(b, dev) {
   if (await p.$("#agree")) { await p.click("#agree") } if (await p.$("#lno")) await p.click("#lno");
   await p.waitForTimeout(4500); await p.click("#pwi"); await p.waitForTimeout(300);
   ok((await p.textContent(".sheet")).includes("Open in Chrome"), "Messenger browser told to open in Chrome");
-    await b.close(); srv.close();
+    // Desktop Chrome: laging may "I-download ang app" button sa header
+  c = await ctxFor(b, { viewport: { width: 1400, height: 800 } }); p = await c.newPage();
+  await p.goto(URL); await p.evaluate(() => { localStorage.setItem("cf_terms", "x") }); await p.goto(URL); await p.waitForTimeout(500);
+  if (await p.$("#agree")) { await p.click("#agree") } if (await p.$("#lno")) await p.click("#lno");
+  ok(await p.isVisible("#pwdl") && (await p.textContent("#pwdl")).includes("I-download ang app"), "desktop header has download button");
+  await p.click("#pwdl"); await p.waitForTimeout(300); ok((await p.textContent(".sheet")).includes("Install CoolFix"), "desktop steps shown without Chrome prompt");
+  await p.click("#pwok");
+  await p.evaluate(() => { const e = new Event("beforeinstallprompt"); e.prompt = () => { window.__prompted = 1 }; e.userChoice = Promise.resolve({ outcome: "dismissed" }); window.dispatchEvent(e) });
+  await p.click("#pwdl"); await p.waitForTimeout(200); ok(await p.evaluate(() => window.__prompted), "download button opens Chrome install prompt");
+  await c.close();
+  // Safari sa Mac
+  c = await ctxFor(b, { viewport: { width: 1400, height: 800 }, userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15" }); p = await c.newPage();
+  await p.goto(URL); await p.evaluate(() => { localStorage.setItem("cf_terms", "x") }); await p.goto(URL); await p.waitForTimeout(500);
+  if (await p.$("#agree")) { await p.click("#agree") } if (await p.$("#lno")) await p.click("#lno");
+  await p.click("#pwdl"); await p.waitForTimeout(300);
+  ok((await p.textContent(".sheet")).includes("Add to Dock"), "Mac Safari told to use Add to Dock");
+  await c.close();
+  await b.close(); srv.close();
 })().catch(e => { console.error(e); process.exit(1) });
